@@ -133,3 +133,39 @@ def test_relay_and_close_orders_carry_their_kind():
     with pytest.raises(ledger.LedgerError) as e:
         _new(kind="nuke")
     assert e.value.code == "bad_kind"
+
+
+def _printer(home, name, data: bytes):
+    """A done command that writes exactly `data` to stdout (no command-line encoding in between)."""
+    script = home / f"{name}.py"
+    script.write_text(f"import sys\nsys.stdout.buffer.write({data!r})\n", encoding="utf-8")
+    return f'"{sys.executable}" "{script}"'
+
+
+def test_close_reads_the_done_output_as_utf8(home):
+    """A done command that prints UTF-8 (node --test prints U+2714) is recorded as written.
+
+    0.1.0 decoded it with the ANSI code page: mojibake, or a UnicodeDecodeError in the reader
+    thread that left stdout as "". The exit code was right either way.
+    """
+    cmd = _printer(home, "utf8", "\u2714 pass 17 \u2014 \u201cok\u201d\n".encode("utf-8"))
+    oid = _new(done_cmd=cmd)
+    ledger.accept(oid)
+    ledger.report(oid, "ready", "node 17 passed")
+    ok, detail = ledger.close(oid)
+    assert ok and detail["exit_code"] == 0
+    assert detail["stdout"] == "\u2714 pass 17 \u2014 \u201cok\u201d"
+
+
+def test_close_survives_bytes_that_are_not_utf8(home):
+    cmd = _printer(home, "raw", bytes([0x9D, 0x41]))
+    oid = _new(done_cmd=cmd)
+    ledger.accept(oid)
+    ledger.report(oid, "ready", "claimed")
+    ok, detail = ledger.close(oid)
+    assert ok and detail["stdout"].endswith("A")
+
+
+def test_accept_records_the_accepting_session():
+    oid = _new()
+    assert ledger.accept(oid, session_id="sess-9")["session_id"] == "sess-9"

@@ -17,7 +17,7 @@ Without it, everything else works, and closing a tab is a manual step.
    If `conradorebuffo.tab-dispatch` is listed at the plugin version, stop: it is installed.
 2. **Install.** Run:
    ```
-   code --install-extension "${CLAUDE_PLUGIN_ROOT}/extension/dist/tab-dispatch-0.1.0.vsix"
+   code --install-extension "${CLAUDE_PLUGIN_ROOT}/extension/dist/tab-dispatch-0.1.1.vsix"
    ```
    Measured on 2026-11-12: this installs without a dialog and prints
    `Extension '...vsix' was successfully installed.` Windows only.

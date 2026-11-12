@@ -15,7 +15,7 @@ States:
 
 Usage:
     python scripts/ledger.py assign --ref R --objective O --done CMD [--limits L] [--files a,b]
-    python scripts/ledger.py accept ID [--tab TITLE]
+    python scripts/ledger.py accept ID [--tab TITLE] [--session SESSION_ID]
     python scripts/ledger.py report ID --state ready|waiting|blocked|failed|dropped --evidence E [--question Q]
     python scripts/ledger.py close ID
     python scripts/ledger.py role SESSION_ID coord|child [SCOPE]
@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS assignments (
     state TEXT NOT NULL DEFAULT 'offered' CHECK (state IN
         ('offered','accepted','ready','waiting','blocked','failed','dropped','closed')),
     tab_title TEXT,
+    session_id TEXT,
     evidence TEXT,
     question TEXT,
     deadline TEXT,
@@ -109,6 +110,9 @@ def _conn() -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(assignments)")}
+    if "session_id" not in cols:  # ledgers created by 0.1.0
+        conn.execute("ALTER TABLE assignments ADD COLUMN session_id TEXT")
     return conn
 
 
@@ -189,11 +193,39 @@ def _move(conn, row, new_state, **fields) -> None:
     conn.execute(f"UPDATE assignments SET {sets} WHERE id=?", (*fields.values(), row["id"]))
 
 
-def accept(assignment_id: int, tab_title: str | None = None) -> dict:
+def current_session_id() -> str | None:
+    """The Claude Code session this process runs in, if any (set by Claude Code itself)."""
+    return os.environ.get("CLAUDE_CODE_SESSION_ID") or None
+
+
+def _retitle(session_id: str | None) -> str | None:
+    """Write the tab title of `session_id` now. A title never makes a ledger call fail."""
+    if not session_id:
+        return None
+    try:
+        import titles
+        return titles.retitle(session_id)
+    except (OSError, ValueError, sqlite3.Error) as err:
+        log = data_dir() / "logs" / "hook_errors.log"
+        try:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with open(log, "a", encoding="utf-8") as f:
+                f.write(f"retitle {session_id}: {type(err).__name__}: {err}\n")
+        except OSError:
+            print(f"retitle {session_id}: {type(err).__name__}: {err}", file=sys.stderr)
+        return None
+
+
+def accept(assignment_id: int, tab_title: str | None = None, session_id: str | None = None) -> dict:
+    """Take an order. The accepting session is recorded, so the title names this order only."""
+    session_id = _one_line(session_id) or current_session_id()
     with _conn() as conn:
         row = _row(conn, assignment_id)
-        _move(conn, row, "accepted", tab_title=_one_line(tab_title) or row["tab_title"])
-        return dict(_row(conn, assignment_id))
+        _move(conn, row, "accepted", tab_title=_one_line(tab_title) or row["tab_title"],
+              session_id=session_id or row["session_id"])
+        out = dict(_row(conn, assignment_id))
+    _retitle(session_id)
+    return out
 
 
 def report(assignment_id: int, state: str, evidence: str, question: str | None = None) -> str:
@@ -226,6 +258,7 @@ def set_role(session_id: str, role: str, scope: str | None = None) -> None:
             "ON CONFLICT(session_id) DO UPDATE SET role=excluded.role, scope=excluded.scope, "
             "updated_at=excluded.updated_at",
             (session_id, role, _one_line(scope) or None, _now().isoformat(timespec="seconds")))
+    _retitle(session_id)
 
 
 def get_role(session_id: str) -> dict | None:
@@ -309,6 +342,7 @@ def main(argv=None) -> int:
     b = sub.add_parser("accept")
     b.add_argument("id", type=int)
     b.add_argument("--tab")
+    b.add_argument("--session", help="accepting session id (default: $CLAUDE_CODE_SESSION_ID)")
     c = sub.add_parser("report")
     c.add_argument("id", type=int)
     c.add_argument("--state", required=True)
@@ -329,7 +363,7 @@ def main(argv=None) -> int:
                          [f for f in args.files.split(",") if f.strip()], args.deadline, args.kind)
             print(render_order(oid))
         elif args.cmd == "accept":
-            print(json.dumps(accept(args.id, args.tab), ensure_ascii=False, indent=2))
+            print(json.dumps(accept(args.id, args.tab, args.session), ensure_ascii=False, indent=2))
         elif args.cmd == "report":
             print(report(args.id, args.state, args.evidence, args.question))
         elif args.cmd == "role":

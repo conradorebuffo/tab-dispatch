@@ -61,6 +61,10 @@ measured is described when it is published.
 - It depends on behavior that is not documented: the `viewType` of the Claude Code webview
   and the way VS Code cuts a tab title to 24 characters. Both fail on the safe side: a tab
   that cannot be matched by exact title is not closed.
+- The tab title is written to disk at once, per session, but the VS Code label only shows it
+  after the extension lists the sessions again (open the session history or reopen the
+  window). Measured with the extension 2.1.322: it does not watch the title file. Until then
+  every new tab reads "Claude Code", so closing by title is ambiguous and nothing is closed.
 - A tab with an open VS Code dialog does not receive messages until a person closes the dialog.
 - File overlap between tabs is only a warning (`scripts/file_overlap.py`). For a real guard,
   use something like cotenancy-guard.
@@ -88,7 +92,7 @@ works and closing a tab is manual.
 | Order ledger (SQLite, `~/.claude/tab-dispatch/ledger.db`) | `scripts/ledger.py` |
 | Done check by exit code | `scripts/done_criterio.py` |
 | Tab launch and control | `scripts/tab_launch.py`, `scripts/tab_control.py`, `extension/` |
-| Tab title from the role | `hooks/tab_title.py` |
+| Tab title from the role and the order this tab accepted | `hooks/tab_title.py`, `scripts/titles.py` |
 
 Every figure in this README has its source in [docs/SOURCES.md](docs/SOURCES.md).
 

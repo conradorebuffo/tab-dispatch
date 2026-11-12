@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -27,7 +28,12 @@ def check_done(ref, criterion_cmd, cwd=None):
     """Run the criterion and return (verified: bool, detail: dict)."""
     base = {"ref": ref, "criterion": criterion_cmd}
     try:
+        # UTF-8 with replacement: on Windows the default decoder is the ANSI code page, which
+        # turned a check mark into mojibake and made the reader thread raise UnicodeDecodeError
+        # (stdout recorded as ""). PYTHONIOENCODING makes a Python criterion write UTF-8 too.
         r = subprocess.run(criterion_cmd, shell=True, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace",
+                           env={**os.environ, "PYTHONIOENCODING": "utf-8"},
                            timeout=TIMEOUT_S, cwd=str(cwd) if cwd else None)
     except subprocess.TimeoutExpired:
         return False, {**base, "verified": False, "exit_code": None,
