@@ -169,3 +169,20 @@ def test_close_survives_bytes_that_are_not_utf8(home):
 def test_accept_records_the_accepting_session():
     oid = _new()
     assert ledger.accept(oid, session_id="sess-9")["session_id"] == "sess-9"
+
+
+def test_close_cli_exits_zero_with_non_ascii_done_output_on_a_cp1252_stdout(home, monkeypatch):
+    """The first 0.1.1 build closed the order, then raised UnicodeEncodeError printing U+2714
+    to a cp1252 stdout: exit 1 on a verified order. The CLI must exit 0 whatever the code page.
+    """
+    import io
+    cmd = _printer(home, "mark", "✔ pass 17 ⚠ warning\n".encode("utf-8"))
+    oid = _new(done_cmd=cmd)
+    ledger.accept(oid)
+    ledger.report(oid, "ready", "node 17 passed")
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252"))
+    assert ledger.main(["close", str(oid)]) == 0
+    sys.stdout.flush()
+    assert "✔ pass 17".encode("utf-8") in raw.getvalue()
+    assert ledger.get(oid)["state"] == "closed"

@@ -79,6 +79,8 @@ def parse_order(text: str) -> dict:
 
 
 def main() -> int:
+    from stdio_utf8 import utf8_stdio
+    utf8_stdio()
     text = sys.stdin.read()
     first = text.strip().splitlines()[0] if text.strip() else ""
     try:

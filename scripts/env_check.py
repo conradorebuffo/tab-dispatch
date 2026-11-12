@@ -71,6 +71,8 @@ def detect_extension_version() -> str:
 
 
 def main(argv=None) -> int:
+    from stdio_utf8 import utf8_stdio
+    utf8_stdio()
     ap = argparse.ArgumentParser(description="Check the environment for tab-dispatch.")
     ap.add_argument("--claude-code", default=None, help="version string; default: `claude --version`")
     ap.add_argument("--extension", default=None, help="version string; default: installed extension")

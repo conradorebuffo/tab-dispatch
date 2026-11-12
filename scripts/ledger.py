@@ -329,6 +329,8 @@ def render_report(assignment_id: int, state: str, evidence: str, question: str |
 
 
 def main(argv=None) -> int:
+    from stdio_utf8 import utf8_stdio
+    utf8_stdio()
     ap = argparse.ArgumentParser(description="Order ledger for tab-dispatch.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("assign")

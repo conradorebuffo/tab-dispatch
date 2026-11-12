@@ -44,6 +44,8 @@ def warnings(new_files, live: dict, porcelain: str = "") -> list[str]:
 
 
 def main(argv=None) -> int:
+    from stdio_utf8 import utf8_stdio
+    utf8_stdio()
     import argparse
 
     import ledger

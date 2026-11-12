@@ -50,6 +50,8 @@ def check_done(ref, criterion_cmd, cwd=None):
 
 
 def main(argv=None) -> int:
+    from stdio_utf8 import utf8_stdio
+    utf8_stdio()
     ap = argparse.ArgumentParser(description="Verdict of the done criterion, by exit code.")
     ap.add_argument("--check", nargs=2, metavar=("REF", "CMD"), required=True,
                     help="Run CMD as the done criterion for REF. Exit 0 = verified.")

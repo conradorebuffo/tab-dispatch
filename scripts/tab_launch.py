@@ -479,6 +479,8 @@ def _dry_run(args, uri, code_exe, source, claude_exe):
 
 
 def main(argv=None):
+    from stdio_utf8 import utf8_stdio
+    utf8_stdio()
     args = _parser().parse_args(argv)
     uri = build_uri(args.prompt)
     launched = False

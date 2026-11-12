@@ -298,6 +298,8 @@ def _parser():
 
 
 def main(argv=None):
+    from stdio_utf8 import utf8_stdio
+    utf8_stdio()
     args = _parser().parse_args(argv)
     code_exe = None
     if args.code_exe:
