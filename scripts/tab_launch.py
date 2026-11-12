@@ -1,55 +1,56 @@
 # -*- coding: utf-8 -*-
-"""tab_launch.py -- Abre una pestaña nueva de Claude Code en VS Code por deep link y espera
-hasta que otra sesión pueda escribirle (relevo de sesión).
+"""tab_launch.py -- Opens a new Claude Code tab in VS Code through a deep link and waits
+until another session can write to it (session relay).
 
-Flujo:
-    1. Foto de los ``sessionId`` vivos (``claude agents --json``).
-    2. Lanza ``Code.exe --open-url -- vscode://anthropic.claude-code/open`` con el entorno
-       del proceso hijo SIN ``ELECTRON_RUN_AS_NODE``.
-    3. Sondea ``claude agents --json`` hasta ver una sesión ``interactive`` que no estaba
-       en la foto, o hasta ``--timeout``.
-    4. Imprime el resultado (``--json`` para consumirlo desde el Router).
+Flow:
+    1. Snapshot of the live ``sessionId`` values (``claude agents --json``).
+    2. Launches ``Code.exe --open-url -- vscode://anthropic.claude-code/open`` with the
+       child process environment WITHOUT ``ELECTRON_RUN_AS_NODE``.
+    3. Polls ``claude agents --json`` until it sees an ``interactive`` session that was not
+       in the snapshot, or until ``--timeout``.
+    4. Prints the result (``--json`` to consume it from the Router).
 
-Uso:
+Usage:
     python scripts/tab_launch.py --thread <thread_id> --json
     python scripts/tab_launch.py --dry-run --json
 
 Exit codes:
-    0  pestaña detectada
-    2  timeout: no apareció ninguna sesión nueva (casi siempre, el diálogo de VS Code
-       sigue sin confirmar)
-    1  error: no es Windows, Code.exe o ``claude`` no encontrados, Code.exe devolvió un
-       exit distinto de 0, dos sesiones nuevas a la vez, argumentos inválidos, etc.
-       (argparse usa 2 para errores de uso; acá se fuerza a 1 para no confundirlo con
-       el timeout)
+    0  tab detected
+    2  timeout: no new session appeared (almost always, the VS Code dialog
+       is still unconfirmed)
+    1  error: not Windows, Code.exe or ``claude`` not found, Code.exe returned a
+       non-zero exit, two new sessions at once, invalid arguments, etc.
+       (argparse uses 2 for usage errors; here it is forced to 1 so it is not confused
+       with the timeout)
 
-HECHOS MEDIDOS en las pruebas previas (2026-11-11):
+FACTS MEASURED in the earlier tests (2026-11-11):
 
-* F0-i. El Bash/Python de una pestaña de Claude Code hereda ``ELECTRON_RUN_AS_NODE``.
-  Con esa variable ``Code.exe`` corre como Node y rechaza el manejador del protocolo:
-  ``bad option: --open-url`` (exit 9). ``os.startfile`` dispara el mismo manejador con
-  el mismo entorno y falla sin error visible. Por eso acá se ejecuta ``Code.exe`` a
-  mano y con la variable quitada del entorno del hijo (el del padre no se toca).
-* F0-j. VS Code muestra el diálogo modal "Allow 'Claude Code for VS Code' extension to
-  open this URI?" en cada lanzamiento, salvo que el usuario haya tildado "Do not ask me
-  again for this extension". Mientras nadie toca "Open" la pestaña no existe: eso es el
-  exit 2. Si el diálogo se confirma después del timeout la pestaña se abre igual, así
-  que antes de relanzar conviene mirar ``claude agents --json``.
-* F0-g. La pestaña abierta por URI figura en ``claude agents --json`` como sesión
-  ``interactive`` / ``idle`` con un ``sessionId`` nuevo y un nombre nativo tipo
-  ``myproject-b3`` ANTES de recibir ningún prompt. Por eso el default es abrir SIN
-  prompt precargado: el Router le manda la primera orden por mensaje. ``--thread`` sólo
-  se registra y se devuelve; no precarga nada. ``--prompt`` existe para el caso manual
-  (el texto queda escrito en la caja, sin enviar).
+* F0-i. The Bash/Python of a Claude Code tab inherits ``ELECTRON_RUN_AS_NODE``.
+  With that variable ``Code.exe`` runs as Node and rejects the protocol handler:
+  ``bad option: --open-url`` (exit 9). ``os.startfile`` triggers the same handler with
+  the same environment and fails with no visible error. That is why ``Code.exe`` is run
+  by hand here, with the variable removed from the child environment (the parent's is
+  not touched).
+* F0-j. VS Code shows the modal dialog "Allow 'Claude Code for VS Code' extension to
+  open this URI?" on every launch, unless the user ticked "Do not ask me
+  again for this extension". While nobody clicks "Open" the tab does not exist: that is
+  exit 2. If the dialog is confirmed after the timeout the tab opens anyway, so
+  before relaunching it is worth looking at ``claude agents --json``.
+* F0-g. The tab opened by URI shows up in ``claude agents --json`` as an
+  ``interactive`` / ``idle`` session with a new ``sessionId`` and a native name like
+  ``myproject-b3`` BEFORE receiving any prompt. That is why the default is to open WITHOUT
+  a preloaded prompt: the Router sends it the first order by message. ``--thread`` is only
+  recorded and returned; it preloads nothing. ``--prompt`` exists for the manual case
+  (the text is typed into the box, unsent).
 
-La URI admite además un parámetro ``session`` (retomar una sesión existente). Este
-script no lo expone: el relevo abre siempre una pestaña nueva.
+The URI also accepts a ``session`` parameter (resume an existing session). This
+script does not expose it: the relay always opens a new tab.
 
-Cada lanzamiento deja rastro append-only en ``~/.claude/tab-dispatch/logs/tab_launch.log`` (una línea
-JSON por evento, con la hora ART tomada del reloj): ``lanzado`` apenas ``Code.exe``
-termina, y ``resultado`` al final. Son dos líneas a propósito: si el proceso muere
-durante la espera, queda constancia de que hay un diálogo abierto en pantalla.
-``--dry-run`` no lanza ni escribe el log.
+Every launch leaves an append-only trace in ``~/.claude/tab-dispatch/logs/tab_launch.log`` (one JSON
+line per event, with the ART time taken from the clock): ``launched`` as soon as ``Code.exe``
+finishes, and ``result`` at the end. Two lines on purpose: if the process dies
+during the wait, there is a record that a dialog is open on screen.
+``--dry-run`` neither launches nor writes the log.
 """
 from __future__ import annotations
 
@@ -71,353 +72,353 @@ ART = timezone(timedelta(hours=-3))
 
 URI_BASE = "vscode://anthropic.claude-code/open"
 
-#: Variables que se quitan del entorno del proceso hijo (F0-i). Sólo lo medido.
-ENV_A_QUITAR = ("ELECTRON_RUN_AS_NODE",)
+#: Variables removed from the child process environment (F0-i). Only what was measured.
+ENV_TO_REMOVE = ("ELECTRON_RUN_AS_NODE",)
 
-#: Comando del protocolo ``vscode`` (HKCR es la vista fusionada de HKCU y HKLM).
-REG_SUBCLAVE = r"vscode\shell\open\command"
+#: Command of the ``vscode`` protocol (HKCR is the merged view of HKCU and HKLM).
+REG_SUBKEY = r"vscode\shell\open\command"
 
-#: Último recurso si no hay ``--code-exe`` ni registro: la instalación por usuario.
-CODE_EXE_ULTIMO_RECURSO = os.path.join(
+#: Last resort if there is no ``--code-exe`` and no registry: the per-user install.
+CODE_EXE_LAST_RESORT = os.path.join(
     os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local"),
     "Programs", "Microsoft VS Code", "Code.exe")
 
 TIMEOUT_DEFAULT_S = 90.0
-SONDEO_S = 2.0
-#: Con una instancia de VS Code ya abierta, ``Code.exe --open-url`` reenvía la URI y sale
-#: enseguida. Si no sale en este plazo NO se lo mata: puede ser la instancia principal.
-ESPERA_CODE_EXE_S = 20.0
+POLL_S = 2.0
+#: With a VS Code instance already open, ``Code.exe --open-url`` forwards the URI and exits
+#: right away. If it does not exit within this window it is NOT killed: it may be the main instance.
+CODE_EXE_WAIT_S = 20.0
 AGENTS_TIMEOUT_S = 30.0
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_TIMEOUT = 2
 
-#: Carpeta de datos del plugin (la misma que usa el libro de ordenes). TAB_DISPATCH_HOME la cambia.
+#: Plugin data folder (the same one the order ledger uses). TAB_DISPATCH_HOME changes it.
 DATA_DIR = Path(os.environ.get("TAB_DISPATCH_HOME") or (Path.home() / ".claude" / "tab-dispatch"))
 LOG_PATH = DATA_DIR / "logs" / "tab_launch.log"
 
 
 class TabLaunchError(Exception):
-    """Fallo que termina la corrida con exit 1 y un mensaje legible."""
+    """Failure that ends the run with exit 1 and a readable message."""
 
 
-def _aviso(msg):
+def _warn(msg):
     print(f"[tab_launch] {msg}", file=sys.stderr)
 
 
-def es_windows():
+def is_windows():
     return sys.platform == "win32"
 
 
-def ahora_art():
-    """Hora ART leída del reloj de la máquina (nunca estimada por un modelo: F0-b)."""
+def now_art():
+    """ART time read from the machine clock (never estimated by a model: F0-b)."""
     return datetime.now(ART).strftime("%Y-%m-%d %H:%M:%S ART")
 
 
-# ---------------------------------------------------------------- URI y entorno
+# ---------------------------------------------------------------- URI and environment
 
 def build_uri(prompt=None):
-    """URI del deep link. Sin prompt (default) la pestaña abre con la caja vacía."""
+    """Deep link URI. Without a prompt (default) the tab opens with an empty box."""
     if prompt is None or not str(prompt).strip():
         return URI_BASE
-    # safe="" codifica también '/', ':' y '&'; el espacio va como %20, nunca '+'.
+    # safe="" also encodes '/', ':' and '&'; the space goes as %20, never '+'.
     return f"{URI_BASE}?prompt={quote(str(prompt), safe='')}"
 
 
-def entorno_hijo(base=None):
-    """Copia del entorno sin las variables de ``ENV_A_QUITAR``.
+def child_env(base=None):
+    """Copy of the environment without the ``ENV_TO_REMOVE`` variables.
 
-    Compara en mayúsculas: en Windows los nombres de variable no distinguen caja.
-    Devuelve SIEMPRE un dict nuevo; el entorno del padre queda intacto.
+    Compares in upper case: on Windows variable names are case-insensitive.
+    ALWAYS returns a new dict; the parent environment is left intact.
     """
-    origen = os.environ if base is None else base
-    quitar = {v.upper() for v in ENV_A_QUITAR}
-    return {k: v for k, v in origen.items() if k.upper() not in quitar}
+    source = os.environ if base is None else base
+    remove = {v.upper() for v in ENV_TO_REMOVE}
+    return {k: v for k, v in source.items() if k.upper() not in remove}
 
 
-def variables_presentes(base=None):
-    """Cuáles de ``ENV_A_QUITAR`` están hoy en el entorno. Sólo nombres, nunca valores."""
-    origen = os.environ if base is None else base
-    presentes = {k.upper() for k in origen}
-    return [v for v in ENV_A_QUITAR if v.upper() in presentes]
+def present_variables(base=None):
+    """Which of ``ENV_TO_REMOVE`` are in the environment today. Names only, never values."""
+    source = os.environ if base is None else base
+    present = {k.upper() for k in source}
+    return [v for v in ENV_TO_REMOVE if v.upper() in present]
 
 
 # ---------------------------------------------------------------- Code.exe
 
-def exe_de_comando(comando):
-    """Extrae el ejecutable de un comando de protocolo del registro.
+def exe_from_command(command):
+    """Extracts the executable from a registry protocol command.
 
-    ``"C:\\...\\Code.exe" --open-url -- "%1"`` -> ``C:\\...\\Code.exe``. Acepta también la
-    forma sin comillas, con espacios en la ruta. Devuelve None si no hay nada que extraer.
+    ``"C:\\...\\Code.exe" --open-url -- "%1"`` -> ``C:\\...\\Code.exe``. Also accepts the
+    unquoted form, with spaces in the path. Returns None if there is nothing to extract.
     """
-    s = (comando or "").strip()
+    s = (command or "").strip()
     if not s:
         return None
     if s.startswith('"'):
-        fin = s.find('"', 1)
-        return s[1:fin] if fin > 1 else None
+        end = s.find('"', 1)
+        return s[1:end] if end > 1 else None
     m = re.match(r"(.+?\.exe)(?=\s|$)", s, flags=re.IGNORECASE)
     if m:
         return m.group(1)
     return s.split()[0]
 
 
-def leer_comando_registro():
-    """Valor por defecto de ``HKCR\\vscode\\shell\\open\\command``, o None.
+def read_registry_command():
+    """Default value of ``HKCR\\vscode\\shell\\open\\command``, or None.
 
-    Nunca lanza: un registro ilegible deja el motivo en stderr y cede al último recurso.
+    Never raises: an unreadable registry leaves the reason on stderr and yields to the last resort.
     """
     try:
         import winreg
     except ImportError as e:
-        _aviso(f"registro: winreg no disponible ({e!r})")
+        _warn(f"registry: winreg not available ({e!r})")
         return None
     try:
-        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, REG_SUBCLAVE) as clave:
-            valor, tipo = winreg.QueryValueEx(clave, "")
-            if tipo == winreg.REG_EXPAND_SZ and isinstance(valor, str):
-                valor = winreg.ExpandEnvironmentStrings(valor)
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, REG_SUBKEY) as key:
+            value, kind = winreg.QueryValueEx(key, "")
+            if kind == winreg.REG_EXPAND_SZ and isinstance(value, str):
+                value = winreg.ExpandEnvironmentStrings(value)
     except OSError as e:
-        _aviso(f"registro: no se pudo leer HKCR\\{REG_SUBCLAVE} ({e!r})")
+        _warn(f"registry: could not read HKCR\\{REG_SUBKEY} ({e!r})")
         return None
-    if not isinstance(valor, str) or not valor.strip():
-        _aviso(f"registro: HKCR\\{REG_SUBCLAVE} está vacío")
+    if not isinstance(value, str) or not value.strip():
+        _warn(f"registry: HKCR\\{REG_SUBKEY} is empty")
         return None
-    return valor
+    return value
 
 
-def candidatos_ultimo_recurso():
-    """Rutas a probar cuando no hay ``--code-exe`` ni registro utilizable."""
-    rutas = []
+def last_resort_candidates():
+    """Paths to try when there is no ``--code-exe`` and no usable registry."""
+    paths = []
     local = os.environ.get("LOCALAPPDATA")
     if local:
-        rutas.append(os.path.join(local, "Programs", "Microsoft VS Code", "Code.exe"))
-    if CODE_EXE_ULTIMO_RECURSO not in rutas:
-        rutas.append(CODE_EXE_ULTIMO_RECURSO)
-    return rutas
+        paths.append(os.path.join(local, "Programs", "Microsoft VS Code", "Code.exe"))
+    if CODE_EXE_LAST_RESORT not in paths:
+        paths.append(CODE_EXE_LAST_RESORT)
+    return paths
 
 
-def _es_exe(ruta):
-    return str(ruta).lower().endswith(".exe")
+def _is_exe(path):
+    return str(path).lower().endswith(".exe")
 
 
-def resolver_code_exe(forzado=None):
-    """Devuelve ``(ruta, fuente)`` con fuente en {'--code-exe', 'registro', 'ultimo-recurso'}.
+def resolve_code_exe(forced=None):
+    """Returns ``(path, source)`` with source in {'--code-exe', 'registry', 'last-resort'}.
 
-    Orden: ``--code-exe`` (manda y no cae a otra vía si está mal) -> comando del protocolo
-    ``vscode`` en el registro -> ruta por usuario. Sólo se acepta un ``.exe``: los wrappers
-    ``code.cmd``/``.bat`` pasan por ``cmd.exe``, que reinterpreta los ``%XX`` de la URI, y
-    lo medido en la Fase 0 es ``Code.exe``.
+    Order: ``--code-exe`` (it wins and does not fall back to another route if it is wrong) -> command
+    of the ``vscode`` protocol in the registry -> per-user path. Only a ``.exe`` is accepted: the
+    ``code.cmd``/``.bat`` wrappers go through ``cmd.exe``, which reinterprets the ``%XX`` of the URI, and
+    what was measured in Phase 0 is ``Code.exe``.
     """
-    if forzado:
-        if not _es_exe(forzado):
+    if forced:
+        if not _is_exe(forced):
             raise TabLaunchError(
-                f"--code-exe tiene que ser Code.exe, no un wrapper .cmd/.bat: {forzado}")
-        if not os.path.isfile(forzado):
-            raise TabLaunchError(f"--code-exe no existe: {forzado}")
-        return str(forzado), "--code-exe"
+                f"--code-exe must be Code.exe, not a .cmd/.bat wrapper: {forced}")
+        if not os.path.isfile(forced):
+            raise TabLaunchError(f"--code-exe does not exist: {forced}")
+        return str(forced), "--code-exe"
 
-    comando = leer_comando_registro()
-    if comando:
-        exe = exe_de_comando(comando)
-        if exe and _es_exe(exe) and os.path.isfile(exe):
-            return exe, "registro"
-        _aviso(f"registro: el comando del protocolo vscode no apunta a un .exe existente "
-               f"({exe!r}); se prueba el último recurso")
+    command = read_registry_command()
+    if command:
+        exe = exe_from_command(command)
+        if exe and _is_exe(exe) and os.path.isfile(exe):
+            return exe, "registry"
+        _warn(f"registry: the vscode protocol command does not point to an existing .exe "
+              f"({exe!r}); trying the last resort")
 
-    probadas = candidatos_ultimo_recurso()
-    for ruta in probadas:
-        if os.path.isfile(ruta):
-            return ruta, "ultimo-recurso"
+    tried = last_resort_candidates()
+    for path in tried:
+        if os.path.isfile(path):
+            return path, "last-resort"
     raise TabLaunchError(
-        "no se encontró Code.exe: ni en el registro (HKCR\\" + REG_SUBCLAVE + ") ni en "
-        + " | ".join(probadas) + ". Pasalo con --code-exe")
+        "Code.exe not found: neither in the registry (HKCR\\" + REG_SUBKEY + ") nor in "
+        + " | ".join(tried) + ". Pass it with --code-exe")
 
 
-# ---------------------------------------------------------------- lanzamiento
+# ---------------------------------------------------------------- launch
 
-def lanzar_uri(code_exe, uri, espera_s=ESPERA_CODE_EXE_S):
-    """Ejecuta ``Code.exe --open-url -- <uri>`` con el entorno limpio.
+def launch_uri(code_exe, uri, wait_s=CODE_EXE_WAIT_S):
+    """Runs ``Code.exe --open-url -- <uri>`` with the clean environment.
 
-    Devuelve ``{"argv", "exit_code", "salida"}``. ``exit_code`` es None si ``Code.exe`` no
-    terminó en ``espera_s``: no se lo mata (puede ser la instancia principal de VS Code) y
-    el llamador sigue sondeando.
+    Returns ``{"argv", "exit_code", "output"}``. ``exit_code`` is None if ``Code.exe`` did not
+    finish within ``wait_s``: it is not killed (it may be the main VS Code instance) and
+    the caller keeps polling.
 
-    La salida va a un archivo temporal y no a un pipe: con pipes, un proceso nieto que
-    herede el handle dejaría colgada la lectura aunque ``Code.exe`` ya hubiera salido.
+    The output goes to a temporary file and not to a pipe: with pipes, a grandchild process that
+    inherits the handle would leave the read hanging even though ``Code.exe`` had already exited.
     """
     argv = [code_exe, "--open-url", "--", uri]
-    with tempfile.TemporaryFile() as captura:
+    with tempfile.TemporaryFile() as capture:
         try:
-            proc = subprocess.Popen(argv, env=entorno_hijo(), stdin=subprocess.DEVNULL,
-                                    stdout=captura, stderr=subprocess.STDOUT)
+            proc = subprocess.Popen(argv, env=child_env(), stdin=subprocess.DEVNULL,
+                                    stdout=capture, stderr=subprocess.STDOUT)
         except OSError as e:
-            raise TabLaunchError(f"no se pudo ejecutar {code_exe}: {e!r}") from e
+            raise TabLaunchError(f"could not run {code_exe}: {e!r}") from e
         try:
-            exit_code = proc.wait(timeout=espera_s)
+            exit_code = proc.wait(timeout=wait_s)
         except subprocess.TimeoutExpired:
-            _aviso(f"Code.exe (pid {proc.pid}) no terminó en {espera_s:g} s; se lo deja vivo "
-                   f"(puede ser la instancia principal de VS Code) y se sigue sondeando")
-            return {"argv": argv, "exit_code": None, "salida": ""}
-        captura.seek(0)
-        salida = captura.read().decode("utf-8", errors="replace").strip()
-    return {"argv": argv, "exit_code": exit_code, "salida": salida}
+            _warn(f"Code.exe (pid {proc.pid}) did not finish in {wait_s:g} s; leaving it alive "
+                  f"(it may be the main VS Code instance) and continuing to poll")
+            return {"argv": argv, "exit_code": None, "output": ""}
+        capture.seek(0)
+        output = capture.read().decode("utf-8", errors="replace").strip()
+    return {"argv": argv, "exit_code": exit_code, "output": output}
 
 
 # ---------------------------------------------------------------- claude agents
 
-def parsear_agentes(texto):
-    """``claude agents --json`` -> lista de dicts. Acepta lista u objeto con clave ``agents``."""
+def parse_agents(text):
+    """``claude agents --json`` -> list of dicts. Accepts a list or an object with an ``agents`` key."""
     try:
-        data = json.loads(texto)
+        data = json.loads(text)
     except ValueError as e:
-        raise TabLaunchError(f"claude agents --json no devolvió JSON válido ({e})") from e
+        raise TabLaunchError(f"claude agents --json did not return valid JSON ({e})") from e
     if isinstance(data, dict):
         data = data.get("agents")
     if not isinstance(data, list):
-        raise TabLaunchError("claude agents --json devolvió una forma inesperada "
-                             "(ni lista ni objeto con clave 'agents')")
+        raise TabLaunchError("claude agents --json returned an unexpected shape "
+                             "(neither a list nor an object with an 'agents' key)")
     return [e for e in data if isinstance(e, dict)]
 
 
-def listar_agentes(timeout_s=AGENTS_TIMEOUT_S):
+def list_agents(timeout_s=AGENTS_TIMEOUT_S):
     exe = shutil.which("claude")
     if not exe:
-        raise TabLaunchError("no se encuentra el ejecutable 'claude' en PATH")
+        raise TabLaunchError("the 'claude' executable was not found in PATH")
     try:
         r = subprocess.run([exe, "agents", "--json"], capture_output=True, text=True,
                            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
                            timeout=timeout_s)
     except subprocess.TimeoutExpired as e:
-        raise TabLaunchError(f"claude agents --json no respondió en {timeout_s:g} s") from e
+        raise TabLaunchError(f"claude agents --json did not respond in {timeout_s:g} s") from e
     except OSError as e:
-        raise TabLaunchError(f"no se pudo ejecutar claude agents --json: {e!r}") from e
+        raise TabLaunchError(f"could not run claude agents --json: {e!r}") from e
     if r.returncode != 0:
-        raise TabLaunchError(f"claude agents --json devolvió exit {r.returncode}: "
+        raise TabLaunchError(f"claude agents --json returned exit {r.returncode}: "
                              f"{(r.stderr or '').strip()[:300]}")
-    return parsear_agentes(r.stdout)
+    return parse_agents(r.stdout)
 
 
-def ids_vivos(entradas):
-    return {str(e["sessionId"]) for e in entradas if e.get("sessionId")}
+def live_ids(entries):
+    return {str(e["sessionId"]) for e in entries if e.get("sessionId")}
 
 
-def _resumen(entrada):
-    return {"session_id": str(entrada.get("sessionId") or ""),
-            "native_name": entrada.get("name"),
-            "status": entrada.get("status")}
+def _summary(entry):
+    return {"session_id": str(entry.get("sessionId") or ""),
+            "native_name": entry.get("name"),
+            "status": entry.get("status")}
 
 
-def candidatas_nuevas(entradas, foto):
-    """Sesiones ``interactive`` cuyo ``sessionId`` no estaba en la foto (sin duplicados)."""
-    nuevas = {}
-    for e in entradas:
+def new_candidates(entries, snapshot):
+    """``interactive`` sessions whose ``sessionId`` was not in the snapshot (no duplicates)."""
+    fresh = {}
+    for e in entries:
         sid = str(e.get("sessionId") or "")
-        if not sid or sid in foto:
+        if not sid or sid in snapshot:
             continue
         if str(e.get("kind") or "").lower() != "interactive":
             continue
-        nuevas.setdefault(sid, _resumen(e))
-    return list(nuevas.values())
+        fresh.setdefault(sid, _summary(e))
+    return list(fresh.values())
 
 
-def esperar_pestana(foto, timeout_s, t0, sondeo_s=SONDEO_S):
-    """Sondea hasta ver exactamente una sesión nueva, más de una, o agotar el plazo.
+def wait_for_tab(snapshot, timeout_s, t0, poll_s=POLL_S):
+    """Polls until it sees exactly one new session, more than one, or the deadline runs out.
 
-    Devuelve ``{"estado", "candidatas", "elapsed_s", "sondeos_ok", "sondeos_fallidos",
-    "ultimo_error"}`` con estado en {'ok', 'ambiguo', 'timeout', 'sin-datos'}. Un sondeo
-    fallido no corta la espera (deja el motivo en stderr); si NINGUNO respondió el estado
-    es 'sin-datos' y no 'timeout', para no culpar al diálogo de un ``claude`` roto.
+    Returns ``{"state", "candidates", "elapsed_s", "polls_ok", "polls_failed",
+    "last_error"}`` with state in {'ok', 'ambiguous', 'timeout', 'no-data'}. A failed poll
+    does not cut the wait (it leaves the reason on stderr); if NONE answered the state
+    is 'no-data' and not 'timeout', so as not to blame the dialog for a broken ``claude``.
     """
-    limite = t0 + timeout_s
-    sondeos_ok = sondeos_fallidos = 0
-    ultimo_error = None
-    estado, nuevas = None, []
+    deadline = t0 + timeout_s
+    polls_ok = polls_failed = 0
+    last_error = None
+    state, fresh = None, []
     while True:
         try:
-            nuevas = candidatas_nuevas(listar_agentes(), foto)
-            sondeos_ok += 1
+            fresh = new_candidates(list_agents(), snapshot)
+            polls_ok += 1
         except TabLaunchError as e:
-            nuevas = []
-            sondeos_fallidos += 1
-            if str(e) != ultimo_error:
-                _aviso(f"sondeo fallido: {e}")
-            ultimo_error = str(e)
-        if len(nuevas) == 1:
-            estado = "ok"
+            fresh = []
+            polls_failed += 1
+            if str(e) != last_error:
+                _warn(f"poll failed: {e}")
+            last_error = str(e)
+        if len(fresh) == 1:
+            state = "ok"
             break
-        if len(nuevas) > 1:
-            estado = "ambiguo"
+        if len(fresh) > 1:
+            state = "ambiguous"
             break
-        restante = limite - time.monotonic()
-        if restante <= 0:
-            estado = "timeout" if sondeos_ok else "sin-datos"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            state = "timeout" if polls_ok else "no-data"
             break
-        time.sleep(min(sondeo_s, restante))
-    return {"estado": estado, "candidatas": nuevas,
+        time.sleep(min(poll_s, remaining))
+    return {"state": state, "candidates": fresh,
             "elapsed_s": round(time.monotonic() - t0, 1),
-            "sondeos_ok": sondeos_ok, "sondeos_fallidos": sondeos_fallidos,
-            "ultimo_error": ultimo_error}
+            "polls_ok": polls_ok, "polls_failed": polls_failed,
+            "last_error": last_error}
 
 
 # ---------------------------------------------------------------- log
 
-def registrar(evento, thread_id, uri, **campos):
-    """Línea JSON append-only en ``LOG_PATH``. Un fallo de escritura no corta el lanzamiento
-    pero queda en stderr (regla 16)."""
-    linea = {"ts": ahora_art(), "evento": evento, "thread_id": thread_id, "uri": uri}
-    linea.update(campos)
+def log_event(event, thread_id, uri, **fields):
+    """Append-only JSON line in ``LOG_PATH``. A write failure does not cut the launch
+    but is left on stderr (rule 16)."""
+    line = {"ts": now_art(), "event": event, "thread_id": thread_id, "uri": uri}
+    line.update(fields)
     try:
         Path(LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
         with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(linea, ensure_ascii=False) + "\n")
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
     except OSError as e:
-        _aviso(f"no se pudo escribir el log {LOG_PATH}: {e!r}")
+        _warn(f"could not write the log {LOG_PATH}: {e!r}")
 
 
 # ---------------------------------------------------------------- CLI
 
 class _Parser(argparse.ArgumentParser):
-    """argparse sale con 2 ante un error de uso; acá 2 significa timeout."""
+    """argparse exits with 2 on a usage error; here 2 means timeout."""
 
     def error(self, message):
         self.print_usage(sys.stderr)
         self.exit(EXIT_ERROR, f"{self.prog}: error: {message}\n")
 
 
-def _segundos(valor):
+def _seconds(value):
     try:
-        n = float(valor)
+        n = float(value)
     except ValueError as e:
-        raise argparse.ArgumentTypeError(f"no es un número de segundos: {valor!r}") from e
+        raise argparse.ArgumentTypeError(f"not a number of seconds: {value!r}") from e
     if not n > 0:
-        raise argparse.ArgumentTypeError(f"tiene que ser mayor que 0: {valor!r}")
+        raise argparse.ArgumentTypeError(f"must be greater than 0: {value!r}")
     return n
 
 
 def _parser():
     ap = _Parser(
         prog="tab_launch.py",
-        description="Abre una pestaña nueva de Claude Code en VS Code por deep link y espera "
-                    "a que sea direccionable .",
-        epilog="Exit: 0 pestaña detectada | 2 timeout (diálogo de VS Code sin confirmar) | "
+        description="Opens a new Claude Code tab in VS Code through a deep link and waits "
+                    "until it is addressable.",
+        epilog="Exit: 0 tab detected | 2 timeout (VS Code dialog unconfirmed) | "
                "1 error.")
     ap.add_argument("--thread", default=None, metavar="THREAD_ID",
-                    help="hilo que va a retomar la pestaña: se registra en el log y se "
-                         "devuelve en la salida. NO precarga ningún prompt")
-    ap.add_argument("--prompt", default=None, metavar="TEXTO",
-                    help="texto a precargar en la caja (queda escrito, sin enviar). "
-                         "Default: sin prompt; la primera orden la manda el Router")
-    ap.add_argument("--timeout", type=_segundos, default=TIMEOUT_DEFAULT_S, metavar="S",
-                    help=f"segundos de espera a que aparezca la pestaña "
-                         f"(default {TIMEOUT_DEFAULT_S:g}; sondeo cada {SONDEO_S:g} s)")
-    ap.add_argument("--code-exe", default=None, metavar="RUTA",
-                    help="fuerza la ruta de Code.exe (default: registro del protocolo "
-                         "vscode, y si no la instalación por usuario)")
+                    help="thread the tab is going to resume: recorded in the log and "
+                         "returned in the output. Does NOT preload any prompt")
+    ap.add_argument("--prompt", default=None, metavar="TEXT",
+                    help="text to preload in the box (typed, unsent). "
+                         "Default: no prompt; the Router sends the first order")
+    ap.add_argument("--timeout", type=_seconds, default=TIMEOUT_DEFAULT_S, metavar="S",
+                    help=f"seconds to wait for the tab to appear "
+                         f"(default {TIMEOUT_DEFAULT_S:g}; poll every {POLL_S:g} s)")
+    ap.add_argument("--code-exe", default=None, metavar="PATH",
+                    help="forces the path of Code.exe (default: vscode protocol "
+                         "registry entry, otherwise the per-user install)")
     ap.add_argument("--dry-run", action="store_true",
-                    help="imprime ejecutable, URI y variables que quita, sin lanzar nada")
-    ap.add_argument("--json", action="store_true", help="salida JSON en stdout")
+                    help="prints executable, URI and the variables it removes, launching nothing")
+    ap.add_argument("--json", action="store_true", help="JSON output on stdout")
     return ap
 
 
@@ -426,142 +427,142 @@ def _payload(thread_id, uri, session_id=None, native_name=None, status=None, ela
             "elapsed_s": elapsed_s, "thread_id": thread_id, "uri": uri}
 
 
-def _imprimir_json(obj):
+def _print_json(obj):
     print(json.dumps(obj, ensure_ascii=False))
 
 
-def _fallar(args, uri, mensaje, exit_code, resultado, lanzado, elapsed_s=None, candidatas=None):
-    """Salida común de todo lo que no es exit 0: stderr, JSON opcional y línea de log."""
-    print(f"tab_launch: {mensaje}", file=sys.stderr)
+def _fail(args, uri, message, exit_code, result, launched, elapsed_s=None, candidates=None):
+    """Common exit for everything that is not exit 0: stderr, optional JSON and a log line."""
+    print(f"tab_launch: {message}", file=sys.stderr)
     payload = _payload(args.thread, uri, elapsed_s=elapsed_s)
-    payload["error"] = mensaje
-    if candidatas:
-        payload["candidates"] = candidatas
+    payload["error"] = message
+    if candidates:
+        payload["candidates"] = candidates
     if args.json:
-        _imprimir_json(payload)
+        _print_json(payload)
     if not args.dry_run:
-        extra = {"candidates": candidatas} if candidatas else {}
-        registrar("resultado", args.thread, uri, resultado=resultado, exit_code=exit_code,
-                  lanzado=lanzado, elapsed_s=elapsed_s, error=mensaje, **extra)
+        extra = {"candidates": candidates} if candidates else {}
+        log_event("result", args.thread, uri, result=result, exit_code=exit_code,
+                  launched=launched, elapsed_s=elapsed_s, error=message, **extra)
     return exit_code
 
 
-def _dry_run(args, uri, code_exe, fuente, claude_exe):
+def _dry_run(args, uri, code_exe, source, claude_exe):
     plan = {
         "dry_run": True,
         "code_exe": code_exe,
-        "code_exe_source": fuente,
+        "code_exe_source": source,
         "argv": [code_exe, "--open-url", "--", uri],
         "uri": uri,
-        "env_removed": list(ENV_A_QUITAR),
-        "env_removed_present": variables_presentes(),
+        "env_removed": list(ENV_TO_REMOVE),
+        "env_removed_present": present_variables(),
         "claude_exe": claude_exe,
         "thread_id": args.thread,
         "timeout_s": args.timeout,
-        "poll_s": SONDEO_S,
+        "poll_s": POLL_S,
     }
     if args.json:
-        _imprimir_json(plan)
+        _print_json(plan)
         return EXIT_OK
-    presentes = set(plan["env_removed_present"])
-    print("[dry-run] no se lanza nada ni se escribe el log")
-    print(f"ejecutable : {code_exe}  (fuente: {fuente})")
-    print(f"argumentos : --open-url -- {uri}")
+    present = set(plan["env_removed_present"])
+    print("[dry-run] nothing is launched and the log is not written")
+    print(f"executable : {code_exe}  (source: {source})")
+    print(f"arguments  : --open-url -- {uri}")
     print(f"uri        : {uri}")
-    for var in ENV_A_QUITAR:
-        estado = "presente en este entorno" if var in presentes else "no está en este entorno"
-        print(f"quita      : {var}  ({estado})")
+    for var in ENV_TO_REMOVE:
+        state = "present in this environment" if var in present else "not in this environment"
+        print(f"removes    : {var}  ({state})")
     print(f"claude     : {claude_exe}")
-    print(f"thread     : {args.thread or '(sin hilo)'}")
-    print(f"espera     : {args.timeout:g} s, sondeo cada {SONDEO_S:g} s")
+    print(f"thread     : {args.thread or '(no thread)'}")
+    print(f"wait       : {args.timeout:g} s, poll every {POLL_S:g} s")
     return EXIT_OK
 
 
 def main(argv=None):
     args = _parser().parse_args(argv)
     uri = build_uri(args.prompt)
-    lanzado = False
+    launched = False
     try:
-        if not es_windows():
+        if not is_windows():
             raise TabLaunchError(
-                f"sólo corre en Windows (plataforma: {sys.platform}): lanza Code.exe")
-        code_exe, fuente = resolver_code_exe(args.code_exe)
+                f"only runs on Windows (platform: {sys.platform}): it launches Code.exe")
+        code_exe, source = resolve_code_exe(args.code_exe)
         claude_exe = shutil.which("claude")
         if not claude_exe:
-            raise TabLaunchError("no se encuentra el ejecutable 'claude' en PATH: sin él no "
-                                 "se puede detectar la pestaña nueva")
+            raise TabLaunchError("the 'claude' executable was not found in PATH: without it the "
+                                 "new tab cannot be detected")
         if args.dry_run:
-            return _dry_run(args, uri, code_exe, fuente, claude_exe)
+            return _dry_run(args, uri, code_exe, source, claude_exe)
 
-        foto = ids_vivos(listar_agentes())
+        snapshot = live_ids(list_agents())
         t0 = time.monotonic()
-        lanz = lanzar_uri(code_exe, uri)
-        if lanz["exit_code"] not in (0, None):
+        launch = launch_uri(code_exe, uri)
+        if launch["exit_code"] not in (0, None):
             raise TabLaunchError(
-                f"Code.exe devolvió exit {lanz['exit_code']} (la URI no se abrió): "
-                f"{lanz['salida'][:300] or 'sin salida'}")
-        lanzado = True
-        registrar("lanzado", args.thread, uri, code_exe=code_exe, code_exe_source=fuente,
-                  code_exit=lanz["exit_code"], sesiones_previas=len(foto))
-        res = esperar_pestana(foto, args.timeout, t0)
+                f"Code.exe returned exit {launch['exit_code']} (the URI was not opened): "
+                f"{launch['output'][:300] or 'no output'}")
+        launched = True
+        log_event("launched", args.thread, uri, code_exe=code_exe, code_exe_source=source,
+                  code_exit=launch["exit_code"], previous_sessions=len(snapshot))
+        res = wait_for_tab(snapshot, args.timeout, t0)
     except TabLaunchError as e:
-        return _fallar(args, uri, str(e), EXIT_ERROR, "error", lanzado)
-    except Exception as e:  # rastro completo en stderr y en el log, nunca en silencio
+        return _fail(args, uri, str(e), EXIT_ERROR, "error", launched)
+    except Exception as e:  # full trace on stderr and in the log, never silent
         traceback.print_exc()
-        return _fallar(args, uri, f"error inesperado: {type(e).__name__}: {e}",
-                       EXIT_ERROR, "error", lanzado)
+        return _fail(args, uri, f"unexpected error: {type(e).__name__}: {e}",
+                     EXIT_ERROR, "error", launched)
 
-    estado, elapsed = res["estado"], res["elapsed_s"]
+    state, elapsed = res["state"], res["elapsed_s"]
 
-    if estado == "ok":
-        c = res["candidatas"][0]
+    if state == "ok":
+        c = res["candidates"][0]
         payload = _payload(args.thread, uri, c["session_id"], c["native_name"], c["status"],
                            elapsed)
-        registrar("resultado", args.thread, uri, resultado="ok", exit_code=EXIT_OK,
-                  lanzado=True, session_id=c["session_id"], native_name=c["native_name"],
+        log_event("result", args.thread, uri, result="ok", exit_code=EXIT_OK,
+                  launched=True, session_id=c["session_id"], native_name=c["native_name"],
                   status=c["status"], elapsed_s=elapsed)
         if args.json:
-            _imprimir_json(payload)
+            _print_json(payload)
         else:
-            print(f"Pestaña nueva detectada en {elapsed:g} s")
+            print(f"New tab detected in {elapsed:g} s")
             print(f"  session_id : {c['session_id']}")
             print(f"  native_name: {c['native_name']}")
             print(f"  status     : {c['status']}")
-            print(f"  thread_id  : {args.thread or '(sin hilo)'}")
+            print(f"  thread_id  : {args.thread or '(no thread)'}")
             print(f"  uri        : {uri}")
         return EXIT_OK
 
-    if estado == "ambiguo":
-        lista = "; ".join(f"{c['native_name']} ({c['session_id']}, {c['status']})"
-                          for c in res["candidatas"])
-        return _fallar(
+    if state == "ambiguous":
+        listing = "; ".join(f"{c['native_name']} ({c['session_id']}, {c['status']})"
+                            for c in res["candidates"])
+        return _fail(
             args, uri,
-            f"aparecieron {len(res['candidatas'])} sesiones nuevas a la vez y no se puede "
-            f"saber cuál es la lanzada: {lista}",
-            EXIT_ERROR, "ambiguo", True, elapsed, res["candidatas"])
+            f"{len(res['candidates'])} new sessions appeared at once and there is no way to "
+            f"tell which one was launched: {listing}",
+            EXIT_ERROR, "ambiguous", True, elapsed, res["candidates"])
 
-    if estado == "sin-datos":
-        return _fallar(
+    if state == "no-data":
+        return _fail(
             args, uri,
-            f"la URI se lanzó pero claude agents --json falló en los "
-            f"{res['sondeos_fallidos']} sondeos, así que no se sabe si la pestaña abrió: "
-            f"{res['ultimo_error']}",
+            f"the URI was launched but claude agents --json failed in all "
+            f"{res['polls_failed']} polls, so it is unknown whether the tab opened: "
+            f"{res['last_error']}",
             EXIT_ERROR, "error", True, elapsed)
 
-    fallidos = (f" ({res['sondeos_fallidos']} sondeos fallaron: {res['ultimo_error']})"
-                if res["sondeos_fallidos"] else "")
-    return _fallar(
+    failed = (f" ({res['polls_failed']} polls failed: {res['last_error']})"
+              if res["polls_failed"] else "")
+    return _fail(
         args, uri,
-        f"timeout: no apareció ninguna pestaña nueva en {args.timeout:g} s{fallidos}. "
-        "Lo más probable es que el diálogo de VS Code \"Allow 'Claude Code for VS Code' "
-        "extension to open this URI?\" siga sin confirmar: falta tocar Open (con \"Do not "
-        "ask me again for this extension\" tildado no vuelve a preguntar). Si se confirma "
-        "más tarde la pestaña se abre igual: antes de relanzar, mirar claude agents --json.",
+        f"timeout: no new tab appeared in {args.timeout:g} s{failed}. "
+        "Most likely the VS Code dialog \"Allow 'Claude Code for VS Code' "
+        "extension to open this URI?\" is still unconfirmed: Open still has to be clicked (with \"Do not "
+        "ask me again for this extension\" ticked it stops asking). If it is confirmed "
+        "later the tab opens anyway: before relaunching, check claude agents --json.",
         EXIT_TIMEOUT, "timeout", True, elapsed)
 
 
 if __name__ == "__main__":
-    for _flujo in (sys.stdout, sys.stderr):
-        if hasattr(_flujo, "reconfigure"):
-            _flujo.reconfigure(encoding="utf-8", errors="replace")
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
     sys.exit(main())

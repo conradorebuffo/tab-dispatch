@@ -1,4 +1,4 @@
 'use strict';
-// Node 24 trata "node --test <directorio>" como un módulo a resolver, no como una carpeta de tests.
-// Este índice permite que `node --test dev/TabDispatch/test/`  corra la suite.
-require('./cotejo.test.js');
+// Node 24 treats "node --test <directory>" as a module to resolve, not as a test folder.
+// This index lets `node --test dev/TabDispatch/test/` run the suite.
+require('./match.test.js');

@@ -1,19 +1,19 @@
 #!/usr/bin/env python
-"""tab_control: cerrar o enfocar una pestaña de Claude Code vía la extensión conradorebuffo.tab-dispatch.
+"""tab_control: close or focus a Claude Code tab through the conradorebuffo.tab-dispatch extension.
 
-Es el MECANISMO: no decide si una pestaña se puede cerrar (eso es la política del Router). Pasos de cada acción:
+It is the MECHANISM: it does not decide whether a tab may be closed (that is the Router's policy). Steps of each action:
 
-1. Comprueba que la instancia de VS Code destino esté corriendo. Si no, no lanza nada: con
-   ``--open-url`` Code.exe abriría un VS Code nuevo.
-2. Escribe el PEDIDO ``%LOCALAPPDATA%\\TabDispatch\\pedidos\\<nonce>.json`` (accion, title, creado).
-   La extensión sólo actúa si ese archivo existe, coincide y tiene menos de 60 s: el nonce de la
-   URI solo no autoriza nada .
-3. Lanza ``Code.exe [--user-data-dir X] --open-url -- vscode://conradorebuffo.tab-dispatch/<accion>?...``
-   reusando ``resolver_code_exe`` y ``entorno_hijo`` de ``tab_launch.py``.
-4. Espera ``resultados/<nonce>.json`` hasta ``--timeout`` y lo traduce a un exit code.
+1. Checks that the target VS Code instance is running. If not, it launches nothing: with
+   ``--open-url`` Code.exe would open a brand new VS Code.
+2. Writes the REQUEST ``%LOCALAPPDATA%\\TabDispatch\\requests\\<nonce>.json`` (action, title, created).
+   The extension only acts if that file exists, matches and is under 60 s old: the URI nonce
+   alone authorizes nothing.
+3. Launches ``Code.exe [--user-data-dir X] --open-url -- vscode://conradorebuffo.tab-dispatch/<action>?...``
+   reusing ``resolve_code_exe`` and ``child_env`` from ``tab_launch.py``.
+4. Waits for ``results/<nonce>.json`` up to ``--timeout`` and translates it to an exit code.
 
-Exit: 0 ok · 1 error · 2 timeout · 4 rechazo de la extensión (no_existe, duplicada, ...).
-Rastro en ``~/.claude/tab-dispatch/logs/tab_control.log``.
+Exit: 0 ok | 1 error | 2 timeout | 4 rejected by the extension (not_found, duplicate, ...).
+Trace in ``~/.claude/tab-dispatch/logs/tab_control.log``.
 """
 from __future__ import annotations
 
@@ -31,267 +31,267 @@ from pathlib import Path
 from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import tab_launch  # noqa: E402  (se reusa resolver_code_exe, entorno_hijo, ahora_art)
+import tab_launch  # noqa: E402  (reuses resolve_code_exe, child_env, now_art)
 
 URI_BASE = "vscode://conradorebuffo.tab-dispatch"
-ACCIONES = ("list", "close", "focus")
+ACTIONS = ("list", "close", "focus")
 TIMEOUT_DEFAULT_S = 15.0
-SONDEO_S = 0.25
-ESPERA_CODE_EXE_S = 20.0
-ESPERA_MEDIR_S = 5.0
-PROCESOS_A_MEDIR = ("claude", "Code")
+POLL_S = 0.25
+CODE_EXE_WAIT_S = 20.0
+MEASURE_WAIT_S = 5.0
+PROCESSES_TO_MEASURE = ("claude", "Code")
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_TIMEOUT = 2
-EXIT_RECHAZO = 4
+EXIT_REJECTED = 4
 
 DATA_DIR = Path(os.environ.get("TAB_DISPATCH_HOME") or (Path.home() / ".claude" / "tab-dispatch"))
 LOG_PATH = DATA_DIR / "logs" / "tab_control.log"
 
 
 class TabControlError(Exception):
-    """Fallo que termina la corrida con exit 1 y un mensaje legible."""
+    """Failure that ends the run with exit 1 and a readable message."""
 
 
 def base_dir():
-    """Carpeta de intercambio con la extensión (la misma que usa ``extension.js``)."""
+    """Exchange folder with the extension (the same one ``extension.js`` uses)."""
     local = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
     return Path(local) / "TabDispatch"
 
 
-def build_uri(accion, titulo, nonce):
-    if accion not in ACCIONES:
-        raise TabControlError(f"accion invalida: {accion!r}")
-    if accion == "list":
+def build_uri(action, title, nonce):
+    if action not in ACTIONS:
+        raise TabControlError(f"invalid action: {action!r}")
+    if action == "list":
         return f"{URI_BASE}/list?nonce={nonce}"
-    if not titulo:
-        raise TabControlError(f"{accion} necesita el titulo de la pestaña")
-    # safe="" codifica '/', ':' y '&'; el espacio va como %20, nunca '+'.
-    return f"{URI_BASE}/{accion}?title={quote(titulo, safe='')}&nonce={nonce}"
+    if not title:
+        raise TabControlError(f"{action} needs the tab title")
+    # safe="" encodes '/', ':' and '&'; the space goes as %20, never '+'.
+    return f"{URI_BASE}/{action}?title={quote(title, safe='')}&nonce={nonce}"
 
 
-# ---------------------------------------------------------------- instancia destino
+# ---------------------------------------------------------------- target instance
 
-def _norm_ruta(texto):
-    return str(texto).strip().strip('"').replace("/", "\\").rstrip("\\").lower()
+def _norm_path(text):
+    return str(text).strip().strip('"').replace("/", "\\").rstrip("\\").lower()
 
 
-def lineas_code_exe():
-    """Líneas de comando de los procesos ``Code.exe`` (PowerShell + CIM). Lanza TabControlError."""
+def code_exe_lines():
+    """Command lines of the ``Code.exe`` processes (PowerShell + CIM). Raises TabControlError."""
     ps = ("Get-CimInstance Win32_Process -Filter \"Name='Code.exe'\" | "
           "Select-Object -ExpandProperty CommandLine | ConvertTo-Json -Compress")
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
                            capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise TabControlError(f"no pude listar procesos Code.exe: {e!r}") from e
+        raise TabControlError(f"could not list Code.exe processes: {e!r}") from e
     if r.returncode != 0:
-        raise TabControlError(f"listar procesos Code.exe fallo (exit {r.returncode}): {r.stderr.strip()[:200]}")
-    salida = (r.stdout or "").strip()
-    if not salida:
+        raise TabControlError(f"listing Code.exe processes failed (exit {r.returncode}): {r.stderr.strip()[:200]}")
+    output = (r.stdout or "").strip()
+    if not output:
         return []
-    datos = json.loads(salida)
-    if isinstance(datos, str):
-        datos = [datos]
-    return [d for d in datos if isinstance(d, str)]
+    data = json.loads(output)
+    if isinstance(data, str):
+        data = [data]
+    return [d for d in data if isinstance(d, str)]
 
 
-def instancia_corriendo(user_data_dir, lineas):
-    """True si hay un proceso PRINCIPAL de Code.exe de esa instancia.
+def instance_running(user_data_dir, lines):
+    """True if there is a MAIN Code.exe process for that instance.
 
-    Los procesos hijos de Electron llevan ``--type=``; el principal no. Sin ``user_data_dir`` la
-    instancia destino es la principal de Conrado: un Code.exe principal sin ``--user-data-dir``.
+    Electron child processes carry ``--type=``; the main one does not. Without ``user_data_dir`` the
+    target instance is Conrado's main one: a main Code.exe without ``--user-data-dir``.
     """
-    ud = _norm_ruta(user_data_dir) if user_data_dir else None
-    for linea in lineas:
-        if "--type=" in linea:
+    ud = _norm_path(user_data_dir) if user_data_dir else None
+    for line in lines:
+        if "--type=" in line:
             continue
         if ud is None:
-            if "--user-data-dir" not in linea:
+            if "--user-data-dir" not in line:
                 return True
-        elif ud in linea.replace("/", "\\").lower():
+        elif ud in line.replace("/", "\\").lower():
             return True
     return False
 
 
-# ---------------------------------------------------------------- lanzamiento y espera
+# ---------------------------------------------------------------- launch and wait
 
-def lanzar(code_exe, uri, user_data_dir=None, espera_s=ESPERA_CODE_EXE_S):
-    """``Code.exe [--user-data-dir X] --open-url -- <uri>`` con el entorno limpio de tab_launch.
+def launch(code_exe, uri, user_data_dir=None, wait_s=CODE_EXE_WAIT_S):
+    """``Code.exe [--user-data-dir X] --open-url -- <uri>`` with the clean environment of tab_launch.
 
-    No mata a Code.exe si no termina en ``espera_s`` (puede ser la instancia principal).
+    Does not kill Code.exe if it does not finish within ``wait_s`` (it may be the main instance).
     """
     argv = [code_exe]
     if user_data_dir:
         argv += ["--user-data-dir", str(user_data_dir)]
     argv += ["--open-url", "--", uri]
-    with tempfile.TemporaryFile() as captura:
+    with tempfile.TemporaryFile() as capture:
         try:
-            proc = subprocess.Popen(argv, env=tab_launch.entorno_hijo(), stdin=subprocess.DEVNULL,
-                                    stdout=captura, stderr=subprocess.STDOUT)
+            proc = subprocess.Popen(argv, env=tab_launch.child_env(), stdin=subprocess.DEVNULL,
+                                    stdout=capture, stderr=subprocess.STDOUT)
         except OSError as e:
-            raise TabControlError(f"no se pudo ejecutar {code_exe}: {e!r}") from e
+            raise TabControlError(f"could not run {code_exe}: {e!r}") from e
         try:
-            exit_code = proc.wait(timeout=espera_s)
+            exit_code = proc.wait(timeout=wait_s)
         except subprocess.TimeoutExpired:
-            return {"argv": argv, "exit_code": None, "salida": ""}
-        captura.seek(0)
-        salida = captura.read().decode("utf-8", errors="replace").strip()
-    return {"argv": argv, "exit_code": exit_code, "salida": salida}
+            return {"argv": argv, "exit_code": None, "output": ""}
+        capture.seek(0)
+        output = capture.read().decode("utf-8", errors="replace").strip()
+    return {"argv": argv, "exit_code": exit_code, "output": output}
 
 
-def esperar_resultado(ruta, timeout_s, sondeo_s=SONDEO_S, reloj=time.monotonic, dormir=time.sleep):
-    """Devuelve el dict del resultado o None si vence ``timeout_s``."""
-    limite = reloj() + timeout_s
+def wait_for_result(path, timeout_s, poll_s=POLL_S, clock=time.monotonic, sleep=time.sleep):
+    """Returns the result dict, or None if ``timeout_s`` runs out."""
+    deadline = clock() + timeout_s
     while True:
-        if ruta.is_file():
+        if path.is_file():
             try:
-                return json.loads(ruta.read_text(encoding="utf-8"))
+                return json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
-                pass  # la extensión escribe a .tmp y renombra: una lectura rota se reintenta
-        if reloj() >= limite:
+                pass  # the extension writes to .tmp and renames: a broken read is retried
+        if clock() >= deadline:
             return None
-        dormir(sondeo_s)
+        sleep(poll_s)
 
 
-def exit_de_resultado(res):
+def exit_from_result(res):
     if res.get("ok"):
         return EXIT_OK
-    if res.get("motivo") == "error":
+    if res.get("reason") == "error":
         return EXIT_ERROR
-    return EXIT_RECHAZO
+    return EXIT_REJECTED
 
 
-# ---------------------------------------------------------------- memoria
+# ---------------------------------------------------------------- memory
 
-def medir_memoria(consultar=None):
-    """{proceso: {n, mb}} para claude y Code, con WorkingSet64. Sólo cantidades."""
-    consultar = consultar or _consultar_memoria
-    return consultar()
+def measure_memory(query=None):
+    """{process: {n, mb}} for claude and Code, using WorkingSet64. Quantities only."""
+    query = query or _query_memory
+    return query()
 
 
-def _consultar_memoria():
+def _query_memory():
     ps = ("Get-Process -Name claude,Code -ErrorAction SilentlyContinue | "
           "Group-Object Name | ForEach-Object { [pscustomobject]@{ n=$_.Name; c=$_.Count; "
           "b=($_.Group | Measure-Object WorkingSet64 -Sum).Sum } } | ConvertTo-Json -Compress")
     r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
                        capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
-        raise TabControlError(f"medir memoria fallo (exit {r.returncode}): {r.stderr.strip()[:200]}")
-    texto = (r.stdout or "").strip()
-    datos = json.loads(texto) if texto else []
-    if isinstance(datos, dict):
-        datos = [datos]
-    out = {p: {"n": 0, "mb": 0.0} for p in PROCESOS_A_MEDIR}
-    for d in datos:
-        nombre = str(d.get("n"))
-        if nombre in out:
-            out[nombre] = {"n": int(d.get("c") or 0), "mb": round((d.get("b") or 0) / 1048576, 1)}
+        raise TabControlError(f"memory measurement failed (exit {r.returncode}): {r.stderr.strip()[:200]}")
+    text = (r.stdout or "").strip()
+    data = json.loads(text) if text else []
+    if isinstance(data, dict):
+        data = [data]
+    out = {p: {"n": 0, "mb": 0.0} for p in PROCESSES_TO_MEASURE}
+    for d in data:
+        name = str(d.get("n"))
+        if name in out:
+            out[name] = {"n": int(d.get("c") or 0), "mb": round((d.get("b") or 0) / 1048576, 1)}
     return out
 
 
-def delta_memoria(antes, despues):
-    return {p: {"n": despues[p]["n"] - antes[p]["n"], "mb": round(despues[p]["mb"] - antes[p]["mb"], 1)}
-            for p in antes if p in despues}
+def memory_delta(before, after):
+    return {p: {"n": after[p]["n"] - before[p]["n"], "mb": round(after[p]["mb"] - before[p]["mb"], 1)}
+            for p in before if p in after}
 
 
 # ---------------------------------------------------------------- log
 
-def registrar(evento, **campos):
-    """Una línea JSON por evento. Un log que no se puede escribir se avisa por stderr (regla 16)."""
-    linea = {"ts": tab_launch.ahora_art(), "evento": evento, **campos}
+def log_event(event, **fields):
+    """One JSON line per event. A log that cannot be written is reported on stderr (rule 16)."""
+    line = {"ts": tab_launch.now_art(), "event": event, **fields}
     try:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(linea, ensure_ascii=False) + "\n")
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
     except OSError as e:
-        print(f"[tab_control] no pude escribir {LOG_PATH}: {e!r}", file=sys.stderr)
+        print(f"[tab_control] could not write {LOG_PATH}: {e!r}", file=sys.stderr)
 
 
-# ---------------------------------------------------------------- orquestación
+# ---------------------------------------------------------------- orchestration
 
-def _pedido(accion, titulo):
-    p = {"accion": accion, "creado": datetime.now(timezone.utc).isoformat()}
-    if accion != "list":
-        p["title"] = titulo
+def _request(action, title):
+    p = {"action": action, "created": datetime.now(timezone.utc).isoformat()}
+    if action != "list":
+        p["title"] = title
     return p
 
 
-def ejecutar(accion, titulo=None, user_data_dir=None, timeout_s=TIMEOUT_DEFAULT_S, medir=False,
-             dry_run=False, base=None, code_exe=None, lineas_fn=None, lanzar_fn=None,
-             memoria_fn=None, dormir=time.sleep, reloj=time.monotonic, nonce=None,
-             espera_medir_s=ESPERA_MEDIR_S):
-    """Corre una acción y devuelve ``{"exit": int, "motivo": str, ...}``. Nunca lanza."""
+def execute(action, title=None, user_data_dir=None, timeout_s=TIMEOUT_DEFAULT_S, measure=False,
+            dry_run=False, base=None, code_exe=None, lines_fn=None, launch_fn=None,
+            memory_fn=None, sleep=time.sleep, clock=time.monotonic, nonce=None,
+            measure_wait_s=MEASURE_WAIT_S):
+    """Runs an action and returns ``{"exit": int, "reason": str, ...}``. Never raises."""
     base = Path(base) if base else base_dir()
     nonce = nonce or str(uuid.uuid4())
-    out = {"accion": accion, "title": titulo, "nonce": nonce, "user_data_dir": user_data_dir}
+    out = {"action": action, "title": title, "nonce": nonce, "user_data_dir": user_data_dir}
     try:
-        uri = build_uri(accion, titulo, nonce)
+        uri = build_uri(action, title, nonce)
         out["uri"] = uri
-        lineas = (lineas_fn or lineas_code_exe)()
-        corriendo = instancia_corriendo(user_data_dir, lineas)
-        out["instancia_corriendo"] = corriendo
-        if not corriendo:
-            out.update(exit=EXIT_ERROR, motivo="instancia_no_corriendo")
-            registrar("sin_instancia", **out)
+        lines = (lines_fn or code_exe_lines)()
+        running = instance_running(user_data_dir, lines)
+        out["instance_running"] = running
+        if not running:
+            out.update(exit=EXIT_ERROR, reason="instance_not_running")
+            log_event("no_instance", **out)
             return out
         if code_exe is None:
-            code_exe, fuente = tab_launch.resolver_code_exe()
-            out["code_exe_fuente"] = fuente
+            code_exe, source = tab_launch.resolve_code_exe()
+            out["code_exe_source"] = source
         out["code_exe"] = code_exe
         if dry_run:
-            out.update(exit=EXIT_OK, motivo="dry_run")
+            out.update(exit=EXIT_OK, reason="dry_run")
             return out
 
-        antes = medir_memoria(memoria_fn) if medir else None
-        pedido_path = base / "pedidos" / f"{nonce}.json"
-        resultado_path = base / "resultados" / f"{nonce}.json"
-        pedido_path.parent.mkdir(parents=True, exist_ok=True)
-        pedido_path.write_text(json.dumps(_pedido(accion, titulo), ensure_ascii=False), encoding="utf-8")
-        registrar("pedido", accion=accion, title=titulo, nonce=nonce, user_data_dir=user_data_dir)
+        before = measure_memory(memory_fn) if measure else None
+        request_path = base / "requests" / f"{nonce}.json"
+        result_path = base / "results" / f"{nonce}.json"
+        request_path.parent.mkdir(parents=True, exist_ok=True)
+        request_path.write_text(json.dumps(_request(action, title), ensure_ascii=False), encoding="utf-8")
+        log_event("request", action=action, title=title, nonce=nonce, user_data_dir=user_data_dir)
         try:
-            lanz = (lanzar_fn or lanzar)(code_exe, uri, user_data_dir)
-            out["lanzamiento_exit"] = lanz.get("exit_code")
-            res = esperar_resultado(resultado_path, timeout_s, dormir=dormir, reloj=reloj)
+            launched = (launch_fn or launch)(code_exe, uri, user_data_dir)
+            out["launch_exit"] = launched.get("exit_code")
+            res = wait_for_result(result_path, timeout_s, sleep=sleep, clock=clock)
         finally:
-            # Un pedido sin consumir no debe quedar en disco (la extensión también lo vence a los 60 s).
+            # An unconsumed request must not stay on disk (the extension also expires it after 60 s).
             try:
-                pedido_path.unlink()
+                request_path.unlink()
             except FileNotFoundError:
                 pass
             except OSError as e:
-                print(f"[tab_control] no pude borrar el pedido {pedido_path}: {e!r}", file=sys.stderr)
+                print(f"[tab_control] could not delete the request {request_path}: {e!r}", file=sys.stderr)
         if res is None:
-            out.update(exit=EXIT_TIMEOUT, motivo="timeout")
+            out.update(exit=EXIT_TIMEOUT, reason="timeout")
         else:
-            out["resultado"] = res
-            out.update(exit=exit_de_resultado(res), motivo=res.get("motivo", "?"))
+            out["result"] = res
+            out.update(exit=exit_from_result(res), reason=res.get("reason", "?"))
             try:
-                resultado_path.unlink()
+                result_path.unlink()
             except OSError as e:
-                print(f"[tab_control] no pude borrar el resultado {resultado_path}: {e!r}", file=sys.stderr)
-        if medir:
-            dormir(espera_medir_s)
-            despues = medir_memoria(memoria_fn)
-            out["memoria"] = {"antes": antes, "despues": despues, "delta": delta_memoria(antes, despues)}
+                print(f"[tab_control] could not delete the result {result_path}: {e!r}", file=sys.stderr)
+        if measure:
+            sleep(measure_wait_s)
+            after = measure_memory(memory_fn)
+            out["memory"] = {"before": before, "after": after, "delta": memory_delta(before, after)}
     except TabControlError as e:
-        out.update(exit=EXIT_ERROR, motivo="error", detalle=str(e))
-    except Exception as e:  # noqa: BLE001 - el log deja el rastro completo (regla 16)
-        out.update(exit=EXIT_ERROR, motivo="error", detalle=repr(e))
-        registrar("excepcion", accion=accion, title=titulo, traza=traceback.format_exc())
-    registrar("fin", **{k: v for k, v in out.items() if k != "resultado"}, ok=out.get("exit") == EXIT_OK)
+        out.update(exit=EXIT_ERROR, reason="error", detail=str(e))
+    except Exception as e:  # noqa: BLE001 - the log keeps the full trace (rule 16)
+        out.update(exit=EXIT_ERROR, reason="error", detail=repr(e))
+        log_event("exception", action=action, title=title, trace=traceback.format_exc())
+    log_event("end", **{k: v for k, v in out.items() if k != "result"}, ok=out.get("exit") == EXIT_OK)
     return out
 
 
 def _parser():
     p = argparse.ArgumentParser(prog="tab_control", description=__doc__.split("\n\n")[0])
-    p.add_argument("accion", choices=ACCIONES)
-    p.add_argument("titulo", nargs="?", help="titulo exacto de la pestaña (close y focus)")
-    p.add_argument("--user-data-dir", help="instancia destino; sin esto, la principal")
+    p.add_argument("action", choices=ACTIONS)
+    p.add_argument("title", nargs="?", help="exact title of the tab (close and focus)")
+    p.add_argument("--user-data-dir", help="target instance; without it, the main one")
     p.add_argument("--timeout", type=float, default=TIMEOUT_DEFAULT_S)
-    p.add_argument("--medir", action="store_true", help="memoria de claude y Code antes y 5 s despues")
-    p.add_argument("--dry-run", action="store_true", help="arma la URI y comprueba la instancia; no lanza")
+    p.add_argument("--measure", action="store_true", help="memory of claude and Code before and 5 s after")
+    p.add_argument("--dry-run", action="store_true", help="builds the URI and checks the instance; does not launch")
     p.add_argument("--code-exe")
     p.add_argument("--json", action="store_true")
     return p
@@ -302,18 +302,18 @@ def main(argv=None):
     code_exe = None
     if args.code_exe:
         try:
-            code_exe, _ = tab_launch.resolver_code_exe(args.code_exe)
+            code_exe, _ = tab_launch.resolve_code_exe(args.code_exe)
         except tab_launch.TabLaunchError as e:
             print(f"[tab_control] {e}", file=sys.stderr)
             return EXIT_ERROR
-    out = ejecutar(args.accion, args.titulo, args.user_data_dir, args.timeout, args.medir,
-                   args.dry_run, code_exe=code_exe)
+    out = execute(args.action, args.title, args.user_data_dir, args.timeout, args.measure,
+                  args.dry_run, code_exe=code_exe)
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
-        print(f"{out['accion']} {out.get('title') or ''}: {out['motivo']} (exit {out['exit']})")
-        if out.get("detalle"):
-            print(out["detalle"], file=sys.stderr)
+        print(f"{out['action']} {out.get('title') or ''}: {out['reason']} (exit {out['exit']})")
+        if out.get("detail"):
+            print(out["detail"], file=sys.stderr)
     return out["exit"]
 
 

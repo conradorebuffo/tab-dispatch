@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Tests de tab_launch.py.
+"""Tests for tab_launch.py.
 
-NINGUN test lanza Code.exe ni corre `claude agents`: el modulo `subprocess` que ve
-tab_launch se reemplaza por un doble, igual que `shutil.which`, el reloj y el registro.
-El log va a tmp_path. No se toca la DB ni el entorno real del workspace.
+NO test launches Code.exe or runs `claude agents`: the `subprocess` module that
+tab_launch sees is replaced by a double, as are `shutil.which`, the clock and the registry.
+The log goes to tmp_path. Neither the DB nor the real workspace environment is touched.
 """
 import json
 import os
@@ -20,19 +20,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import tab_launch  # noqa: E402
 
 VAR = "ELECTRON_RUN_AS_NODE"
-CLAVES_SALIDA = {"session_id", "native_name", "status", "elapsed_s", "thread_id", "uri"}
+OUTPUT_KEYS = {"session_id", "native_name", "status", "elapsed_s", "thread_id", "uri"}
 
 
-def _agente(sid, name, status="idle", kind="interactive"):
+def _agent(sid, name, status="idle", kind="interactive"):
     return {"pid": 1, "cwd": "c:\\work", "kind": kind, "startedAt": 1793826600887,
             "sessionId": sid, "name": name, "status": status}
 
 
-VIEJA_1 = _agente("11111111-0000-4000-8000-000000000001", "T1111-ParentTab", "busy")
-VIEJA_2 = _agente("22222222-0000-4000-8000-000000000002", "myproject-5c")
-NUEVA = _agente("bbbbbbbb-0000-4000-8000-0000000000b3", "myproject-b3")
-NUEVA_2 = _agente("cccccccc-0000-4000-8000-0000000000c0", "myproject-c0")
-BASE = [VIEJA_1, VIEJA_2]
+OLD_1 = _agent("11111111-0000-4000-8000-000000000001", "T1111-ParentTab", "busy")
+OLD_2 = _agent("22222222-0000-4000-8000-000000000002", "myproject-5c")
+NEW = _agent("bbbbbbbb-0000-4000-8000-0000000000b3", "myproject-b3")
+NEW_2 = _agent("cccccccc-0000-4000-8000-0000000000c0", "myproject-c0")
+BASE = [OLD_1, OLD_2]
 
 
 class FakeProc:
@@ -47,40 +47,40 @@ class FakeProc:
 
 
 class FakeSubprocess:
-    """Doble del modulo subprocess: Popen = Code.exe, run = `claude agents --json`.
+    """Double of the subprocess module: Popen = Code.exe, run = `claude agents --json`.
 
-    `agentes` es la secuencia de respuestas de `claude agents`; la ultima se repite.
-    Cada respuesta es una lista/dict (se serializa), un str (stdout crudo), una tupla
-    (exit, stdout, stderr) o una excepcion a levantar.
+    `agents` is the sequence of `claude agents` responses; the last one repeats.
+    Each response is a list/dict (serialized), a str (raw stdout), a tuple
+    (exit, stdout, stderr) or an exception to raise.
     """
     PIPE = subprocess.PIPE
     STDOUT = subprocess.STDOUT
     DEVNULL = subprocess.DEVNULL
     TimeoutExpired = subprocess.TimeoutExpired
 
-    def __init__(self, agentes, code_exit=0, code_salida="", popen_error=None):
-        self.agentes = list(agentes)
+    def __init__(self, agents, code_exit=0, code_output="", popen_error=None):
+        self.agents = list(agents)
         self.code_exit = code_exit
-        self.code_salida = code_salida
+        self.code_output = code_output
         self.popen_error = popen_error
-        self.eventos = []
+        self.events = []
         self.popen_calls = []
         self.run_calls = []
 
     def Popen(self, argv, **kw):
-        self.eventos.append("popen")
+        self.events.append("popen")
         self.popen_calls.append({"argv": list(argv), "env": kw.get("env"), "kw": kw})
         if self.popen_error:
             raise self.popen_error
-        destino = kw.get("stdout")
-        if self.code_salida and hasattr(destino, "write"):
-            destino.write(self.code_salida.encode("utf-8"))
+        target = kw.get("stdout")
+        if self.code_output and hasattr(target, "write"):
+            target.write(self.code_output.encode("utf-8"))
         return FakeProc(self.code_exit)
 
     def run(self, argv, **kw):
-        self.eventos.append("run")
+        self.events.append("run")
         self.run_calls.append(list(argv))
-        r = self.agentes[min(len(self.run_calls), len(self.agentes)) - 1]
+        r = self.agents[min(len(self.run_calls), len(self.agents)) - 1]
         if isinstance(r, BaseException):
             raise r
         if isinstance(r, tuple):
@@ -93,7 +93,7 @@ class FakeSubprocess:
 
 
 class FakeTime:
-    """Reloj que solo avanza cuando el codigo duerme: ningun test espera de verdad."""
+    """Clock that only advances when the code sleeps: no test really waits."""
 
     def __init__(self):
         self.t = 1000.0
@@ -107,40 +107,40 @@ class FakeTime:
         self.t += s
 
 
-class Entorno:
+class Harness:
     def __init__(self, monkeypatch, tmp_path):
         self.mp = monkeypatch
         self.log = tmp_path / "logs" / "tab_launch.log"
         self.code_exe = tmp_path / "vscode" / "Code.exe"
         self.code_exe.parent.mkdir()
         self.code_exe.write_bytes(b"")
-        self.reloj = FakeTime()
+        self.clock = FakeTime()
         self.fake = None
         monkeypatch.setattr(tab_launch, "LOG_PATH", self.log)
-        monkeypatch.setattr(tab_launch, "es_windows", lambda: True)
-        monkeypatch.setattr(tab_launch, "leer_comando_registro",
+        monkeypatch.setattr(tab_launch, "is_windows", lambda: True)
+        monkeypatch.setattr(tab_launch, "read_registry_command",
                             lambda: f'"{self.code_exe}" --open-url -- "%1"')
-        monkeypatch.setattr(tab_launch, "time", self.reloj)
+        monkeypatch.setattr(tab_launch, "time", self.clock)
         self.claude("C:\\fake\\npm\\claude.CMD")
         self.subprocess([BASE])
 
-    def claude(self, ruta):
-        self.mp.setattr(tab_launch, "shutil", types.SimpleNamespace(which=lambda _n: ruta))
+    def claude(self, path):
+        self.mp.setattr(tab_launch, "shutil", types.SimpleNamespace(which=lambda _n: path))
 
-    def subprocess(self, agentes, **kw):
-        self.fake = FakeSubprocess(agentes, **kw)
+    def subprocess(self, agents, **kw):
+        self.fake = FakeSubprocess(agents, **kw)
         self.mp.setattr(tab_launch, "subprocess", self.fake)
         return self.fake
 
-    def lineas_log(self):
+    def log_lines(self):
         if not self.log.exists():
             return []
         return [json.loads(x) for x in self.log.read_text(encoding="utf-8").splitlines()]
 
 
 @pytest.fixture
-def entorno(monkeypatch, tmp_path):
-    return Entorno(monkeypatch, tmp_path)
+def harness(monkeypatch, tmp_path):
+    return Harness(monkeypatch, tmp_path)
 
 
 def _json_stdout(capsys):
@@ -148,35 +148,35 @@ def _json_stdout(capsys):
     return json.loads(out.out), out.err
 
 
-# ------------------------------------------------------------------ entorno del hijo
+# ------------------------------------------------------------------ child environment
 
-def test_entorno_hijo_quita_la_variable_sin_distinguir_caja():
+def test_child_env_removes_the_variable_case_insensitively():
     base = {"Electron_Run_As_Node": "1", "PATH": "x", "ELECTRON_NO_ATTACH_CONSOLE": "1"}
-    hijo = tab_launch.entorno_hijo(base)
-    assert sorted(hijo) == ["ELECTRON_NO_ATTACH_CONSOLE", "PATH"]
-    assert "Electron_Run_As_Node" in base  # el dict de origen no se muta
+    child = tab_launch.child_env(base)
+    assert sorted(child) == ["ELECTRON_NO_ATTACH_CONSOLE", "PATH"]
+    assert "Electron_Run_As_Node" in base  # the source dict is not mutated
 
 
-def test_hijo_sin_electron_run_as_node_aunque_el_padre_la_tenga(entorno, monkeypatch, capsys):
+def test_child_without_electron_run_as_node_even_if_the_parent_has_it(harness, monkeypatch, capsys):
     monkeypatch.setenv(VAR, "1")
-    fake = entorno.subprocess([BASE, BASE + [NUEVA]])
+    fake = harness.subprocess([BASE, BASE + [NEW]])
 
     assert tab_launch.main(["--json"]) == 0
 
-    (llamada,) = fake.popen_calls
-    env = llamada["env"]
-    assert env is not None, "env=None hereda el entorno del padre: es justo el bug de F0-i"
-    hijo_la_tiene = any(k.upper() == VAR for k in env)
-    assert not hijo_la_tiene
-    padre_la_tiene = VAR in os.environ
-    assert padre_la_tiene, "el entorno del padre no se toca"
-    conserva_el_resto = env.get("PATH") == os.environ.get("PATH")
-    assert conserva_el_resto
-    assert llamada["argv"] == [str(entorno.code_exe), "--open-url", "--", tab_launch.URI_BASE]
+    (call,) = fake.popen_calls
+    env = call["env"]
+    assert env is not None, "env=None inherits the parent environment: exactly the F0-i bug"
+    child_has_it = any(k.upper() == VAR for k in env)
+    assert not child_has_it
+    parent_has_it = VAR in os.environ
+    assert parent_has_it, "the parent environment is not touched"
+    keeps_the_rest = env.get("PATH") == os.environ.get("PATH")
+    assert keeps_the_rest
+    assert call["argv"] == [str(harness.code_exe), "--open-url", "--", tab_launch.URI_BASE]
 
 
-def test_claude_agents_no_se_corre_con_shell(entorno, capsys):
-    fake = entorno.subprocess([BASE, BASE + [NUEVA]])
+def test_claude_agents_is_not_run_with_a_shell(harness, capsys):
+    fake = harness.subprocess([BASE, BASE + [NEW]])
     assert tab_launch.main(["--json"]) == 0
     assert fake.run_calls[0] == ["C:\\fake\\npm\\claude.CMD", "agents", "--json"]
     assert "shell" not in fake.popen_calls[0]["kw"]
@@ -184,41 +184,41 @@ def test_claude_agents_no_se_corre_con_shell(entorno, capsys):
 
 # ------------------------------------------------------------------ URI
 
-def test_uri_sin_prompt_es_la_base():
+def test_uri_without_prompt_is_the_base():
     assert tab_launch.build_uri() == "vscode://anthropic.claude-code/open"
     assert tab_launch.build_uri("") == tab_launch.URI_BASE
     assert tab_launch.build_uri("   ") == tab_launch.URI_BASE
 
 
-def test_uri_urlencodea_el_prompt():
-    prompt = "/session-start-fast hilo:thread-x & más=ñ #1 50%+a/b?c\n\"fin\""
+def test_uri_urlencodes_the_prompt():
+    prompt = "/session-start-fast thread:thread-x & m\u00e1s=\u00f1 #1 50%+a/b?c\n\"end\""
     uri = tab_launch.build_uri(prompt)
     assert uri.startswith("vscode://anthropic.claude-code/open?prompt=")
-    crudo = uri.split("?prompt=", 1)[1]
-    # Solo caracteres no reservados y escapes: ningun separador de URI sin codificar.
-    assert re.fullmatch(r"[A-Za-z0-9._~%-]+", crudo), crudo
-    assert "%20" in crudo and "+" not in crudo  # espacio como %20, nunca '+'
-    assert unquote(crudo) == prompt
+    raw = uri.split("?prompt=", 1)[1]
+    # Only unreserved characters and escapes: no URI separator left unencoded.
+    assert re.fullmatch(r"[A-Za-z0-9._~%-]+", raw), raw
+    assert "%20" in raw and "+" not in raw  # space as %20, never '+'
+    assert unquote(raw) == prompt
     assert parse_qs(urlsplit(uri).query, keep_blank_values=True)["prompt"] == [prompt]
 
 
-def test_uri_del_ejemplo_del_plan():
-    uri = tab_launch.build_uri("/session-start-fast hilo:thread-demo")
+def test_uri_from_the_plan_example():
+    uri = tab_launch.build_uri("/session-start-fast thread:thread-demo")
     assert uri == ("vscode://anthropic.claude-code/open"
-                   "?prompt=%2Fsession-start-fast%20hilo%3Athread-demo")
+                   "?prompt=%2Fsession-start-fast%20thread%3Athread-demo")
 
 
-def test_prompt_llega_codificado_a_code_exe(entorno, capsys):
-    fake = entorno.subprocess([BASE, BASE + [NUEVA]])
-    assert tab_launch.main(["--prompt", "hola mundo & más", "--json"]) == 0
+def test_prompt_reaches_code_exe_encoded(harness, capsys):
+    fake = harness.subprocess([BASE, BASE + [NEW]])
+    assert tab_launch.main(["--prompt", "hello world & m\u00e1s", "--json"]) == 0
     payload, _ = _json_stdout(capsys)
-    esperado = tab_launch.URI_BASE + "?prompt=hola%20mundo%20%26%20m%C3%A1s"
-    assert fake.popen_calls[0]["argv"][-1] == esperado
-    assert payload["uri"] == esperado
+    expected = tab_launch.URI_BASE + "?prompt=hello%20world%20%26%20m%C3%A1s"
+    assert fake.popen_calls[0]["argv"][-1] == expected
+    assert payload["uri"] == expected
 
 
-def test_thread_no_precarga_prompt(entorno, capsys):
-    fake = entorno.subprocess([BASE, BASE + [NUEVA]])
+def test_thread_does_not_preload_a_prompt(harness, capsys):
+    fake = harness.subprocess([BASE, BASE + [NEW]])
     assert tab_launch.main(["--thread", "thread-demo", "--json"]) == 0
     payload, _ = _json_stdout(capsys)
     assert fake.popen_calls[0]["argv"][-1] == tab_launch.URI_BASE
@@ -226,330 +226,330 @@ def test_thread_no_precarga_prompt(entorno, capsys):
     assert payload["thread_id"] == "thread-demo"
 
 
-# ------------------------------------------------------------------ deteccion
+# ------------------------------------------------------------------ detection
 
-def test_detecta_la_sesion_nueva(entorno, capsys):
-    # foto, sondeo a t=0, sondeo a t=2, sondeo a t=4 (aparece)
-    fake = entorno.subprocess([BASE, BASE, BASE, BASE + [NUEVA]])
+def test_detects_the_new_session(harness, capsys):
+    # snapshot, poll at t=0, poll at t=2, poll at t=4 (it appears)
+    fake = harness.subprocess([BASE, BASE, BASE, BASE + [NEW]])
 
     rc = tab_launch.main(["--thread", "thread-demo", "--json"])
 
     payload, _ = _json_stdout(capsys)
     assert rc == 0
-    assert set(payload) == CLAVES_SALIDA
-    assert payload == {"session_id": NUEVA["sessionId"], "native_name": "myproject-b3",
+    assert set(payload) == OUTPUT_KEYS
+    assert payload == {"session_id": NEW["sessionId"], "native_name": "myproject-b3",
                        "status": "idle", "elapsed_s": 4.0, "thread_id": "thread-demo",
                        "uri": tab_launch.URI_BASE}
-    assert entorno.reloj.sleeps == [2.0, 2.0]
+    assert harness.clock.sleeps == [2.0, 2.0]
     assert len(fake.popen_calls) == 1
-    # La foto se saca ANTES de lanzar: si no, la pestaña nueva caeria adentro de la foto.
-    assert fake.eventos[:2] == ["run", "popen"]
+    # The snapshot is taken BEFORE launching: otherwise the new tab would fall inside the snapshot.
+    assert fake.events[:2] == ["run", "popen"]
 
 
-def test_salida_humana_sin_json(entorno, capsys):
-    entorno.subprocess([BASE, BASE + [NUEVA]])
+def test_human_output_without_json(harness, capsys):
+    harness.subprocess([BASE, BASE + [NEW]])
     assert tab_launch.main(["--thread", "thread-demo"]) == 0
     out = capsys.readouterr().out
-    assert NUEVA["sessionId"] in out and "myproject-b3" in out and "thread-demo" in out
+    assert NEW["sessionId"] in out and "myproject-b3" in out and "thread-demo" in out
 
 
-def test_acepta_objeto_con_clave_agents(entorno, capsys):
-    entorno.subprocess([{"agents": BASE}, {"agents": BASE + [NUEVA]}])
+def test_accepts_object_with_agents_key(harness, capsys):
+    harness.subprocess([{"agents": BASE}, {"agents": BASE + [NEW]}])
     assert tab_launch.main(["--json"]) == 0
     payload, _ = _json_stdout(capsys)
-    assert payload["session_id"] == NUEVA["sessionId"]
+    assert payload["session_id"] == NEW["sessionId"]
 
 
-def test_sesion_nueva_no_interactiva_no_cuenta(entorno, capsys):
-    fondo = _agente("dddddddd-0000-4000-8000-00000000000d", "worker-x", kind="background")
-    entorno.subprocess([BASE, BASE + [fondo], BASE + [fondo, NUEVA]])
+def test_new_non_interactive_session_does_not_count(harness, capsys):
+    background = _agent("dddddddd-0000-4000-8000-00000000000d", "worker-x", kind="background")
+    harness.subprocess([BASE, BASE + [background], BASE + [background, NEW]])
     assert tab_launch.main(["--json"]) == 0
     payload, _ = _json_stdout(capsys)
-    assert payload["session_id"] == NUEVA["sessionId"]
+    assert payload["session_id"] == NEW["sessionId"]
 
 
-def test_sesion_que_ya_estaba_en_la_foto_no_cuenta(entorno, capsys):
-    entorno.subprocess([BASE + [NUEVA]])  # ya vivia antes del lanzamiento
+def test_session_already_in_the_snapshot_does_not_count(harness, capsys):
+    harness.subprocess([BASE + [NEW]])  # it was already alive before the launch
     assert tab_launch.main(["--timeout", "4", "--json"]) == 2
 
 
-def test_sondeo_fallido_transitorio_no_corta_la_espera(entorno, capsys):
-    entorno.subprocess([BASE, (1, "", "boom transitorio"), BASE + [NUEVA]])
+def test_transient_failed_poll_does_not_cut_the_wait(harness, capsys):
+    harness.subprocess([BASE, (1, "", "transient boom"), BASE + [NEW]])
     assert tab_launch.main(["--json"]) == 0
     payload, err = _json_stdout(capsys)
-    assert payload["session_id"] == NUEVA["sessionId"]
-    assert "boom transitorio" in err  # el fallo deja rastro (regla 16)
+    assert payload["session_id"] == NEW["sessionId"]
+    assert "transient boom" in err  # the failure leaves a trace (rule 16)
 
 
-def test_code_exe_que_no_termina_no_se_mata_y_se_sigue_sondeando(entorno, capsys):
-    entorno.subprocess([BASE, BASE + [NUEVA]], code_exit=None)
+def test_code_exe_that_does_not_finish_is_not_killed_and_polling_continues(harness, capsys):
+    harness.subprocess([BASE, BASE + [NEW]], code_exit=None)
     assert tab_launch.main(["--json"]) == 0
     payload, err = _json_stdout(capsys)
-    assert payload["session_id"] == NUEVA["sessionId"]
-    assert "no terminó" in err
+    assert payload["session_id"] == NEW["sessionId"]
+    assert "did not finish" in err
 
 
 # ------------------------------------------------------------------ timeout
 
-def test_timeout_devuelve_exit_2_y_nombra_el_dialogo(entorno, capsys):
-    fake = entorno.subprocess([BASE])
+def test_timeout_returns_exit_2_and_names_the_dialog(harness, capsys):
+    fake = harness.subprocess([BASE])
 
     rc = tab_launch.main(["--timeout", "10", "--thread", "thread-demo", "--json"])
 
     payload, err = _json_stdout(capsys)
     assert rc == 2
-    assert "diálogo de VS Code" in err and "Open" in err
-    assert "diálogo de VS Code" in payload["error"]
+    assert "VS Code dialog" in err and "Open" in err
+    assert "VS Code dialog" in payload["error"]
     assert payload["session_id"] is None and payload["thread_id"] == "thread-demo"
     assert payload["elapsed_s"] == 10.0
-    assert entorno.reloj.sleeps == [2.0] * 5          # sondeos en t=0,2,4,6,8,10
-    assert len(fake.run_calls) == 1 + 6                # foto + 6 sondeos
-    assert len(fake.popen_calls) == 1                  # un solo lanzamiento, sin reintento
-    assert entorno.lineas_log()[-1]["resultado"] == "timeout"
+    assert harness.clock.sleeps == [2.0] * 5          # polls at t=0,2,4,6,8,10
+    assert len(fake.run_calls) == 1 + 6                # snapshot + 6 polls
+    assert len(fake.popen_calls) == 1                  # a single launch, no retry
+    assert harness.log_lines()[-1]["result"] == "timeout"
 
 
-def test_timeout_no_multiplo_del_sondeo_no_se_pasa_del_plazo(entorno, capsys):
-    entorno.subprocess([BASE])
+def test_timeout_not_a_multiple_of_the_poll_does_not_overshoot(harness, capsys):
+    harness.subprocess([BASE])
     assert tab_launch.main(["--timeout", "5", "--json"]) == 2
-    assert entorno.reloj.sleeps == [2.0, 2.0, 1.0]
+    assert harness.clock.sleeps == [2.0, 2.0, 1.0]
 
 
-def test_si_ningun_sondeo_responde_es_error_y_no_timeout(entorno, capsys):
-    entorno.subprocess([BASE, (1, "", "claude roto")])
+def test_if_no_poll_answers_it_is_an_error_not_a_timeout(harness, capsys):
+    harness.subprocess([BASE, (1, "", "broken claude")])
     rc = tab_launch.main(["--timeout", "4", "--json"])
     payload, err = _json_stdout(capsys)
     assert rc == 1
-    assert "claude roto" in payload["error"]
-    assert "diálogo" not in payload["error"]
+    assert "broken claude" in payload["error"]
+    assert "dialog" not in payload["error"]
 
 
-# ------------------------------------------------------------------ dos candidatas
+# ------------------------------------------------------------------ two candidates
 
-def test_dos_candidatas_devuelve_exit_1_y_las_lista(entorno, capsys):
-    entorno.subprocess([BASE, BASE + [NUEVA, NUEVA_2]])
+def test_two_candidates_returns_exit_1_and_lists_them(harness, capsys):
+    harness.subprocess([BASE, BASE + [NEW, NEW_2]])
 
     rc = tab_launch.main(["--json"])
 
     payload, err = _json_stdout(capsys)
     assert rc == 1
-    assert payload["session_id"] is None, "no adivina cual es"
-    assert [c["session_id"] for c in payload["candidates"]] == [NUEVA["sessionId"],
-                                                               NUEVA_2["sessionId"]]
+    assert payload["session_id"] is None, "it does not guess which one"
+    assert [c["session_id"] for c in payload["candidates"]] == [NEW["sessionId"],
+                                                               NEW_2["sessionId"]]
     assert [c["native_name"] for c in payload["candidates"]] == ["myproject-b3",
                                                                 "myproject-c0"]
-    for c in (NUEVA, NUEVA_2):
+    for c in (NEW, NEW_2):
         assert c["sessionId"] in err and c["name"] in err
-    assert entorno.lineas_log()[-1]["resultado"] == "ambiguo"
+    assert harness.log_lines()[-1]["result"] == "ambiguous"
 
 
 # ------------------------------------------------------------------ dry-run
 
-def test_dry_run_no_lanza_nada(entorno, monkeypatch, capsys):
-    monkeypatch.setenv(VAR, "valor-centinela-xyz")
-    fake = entorno.subprocess([BASE, BASE + [NUEVA]])
+def test_dry_run_launches_nothing(harness, monkeypatch, capsys):
+    monkeypatch.setenv(VAR, "sentinel-value-xyz")
+    fake = harness.subprocess([BASE, BASE + [NEW]])
 
     rc = tab_launch.main(["--dry-run", "--thread", "thread-demo", "--json"])
 
     out = capsys.readouterr().out
     plan = json.loads(out)
     assert rc == 0
-    assert fake.eventos == [], "ni Code.exe ni claude agents"
-    assert not entorno.log.exists(), "el dry-run no escribe el log"
+    assert fake.events == [], "neither Code.exe nor claude agents"
+    assert not harness.log.exists(), "the dry-run does not write the log"
     assert plan["dry_run"] is True
-    assert plan["code_exe"] == str(entorno.code_exe) and plan["code_exe_source"] == "registro"
-    assert plan["argv"] == [str(entorno.code_exe), "--open-url", "--", tab_launch.URI_BASE]
+    assert plan["code_exe"] == str(harness.code_exe) and plan["code_exe_source"] == "registry"
+    assert plan["argv"] == [str(harness.code_exe), "--open-url", "--", tab_launch.URI_BASE]
     assert plan["uri"] == tab_launch.URI_BASE
     assert plan["env_removed"] == [VAR] and plan["env_removed_present"] == [VAR]
     assert plan["thread_id"] == "thread-demo"
-    assert "valor-centinela-xyz" not in out, "solo la presencia de la variable, nunca su valor"
+    assert "sentinel-value-xyz" not in out, "only the presence of the variable, never its value"
 
 
-def test_dry_run_humano_muestra_ejecutable_uri_y_variable(entorno, monkeypatch, capsys):
+def test_human_dry_run_shows_executable_uri_and_variable(harness, monkeypatch, capsys):
     monkeypatch.delenv(VAR, raising=False)
-    fake = entorno.subprocess([BASE])
-    assert tab_launch.main(["--dry-run", "--prompt", "hola mundo"]) == 0
+    fake = harness.subprocess([BASE])
+    assert tab_launch.main(["--dry-run", "--prompt", "hello world"]) == 0
     out = capsys.readouterr().out
-    assert str(entorno.code_exe) in out
-    assert tab_launch.URI_BASE + "?prompt=hola%20mundo" in out
-    assert VAR in out and "no está en este entorno" in out
-    assert fake.eventos == []
+    assert str(harness.code_exe) in out
+    assert tab_launch.URI_BASE + "?prompt=hello%20world" in out
+    assert VAR in out and "not in this environment" in out
+    assert fake.events == []
 
 
-# ------------------------------------------------------------------ resolucion de Code.exe
+# ------------------------------------------------------------------ Code.exe resolution
 
-def test_exe_de_comando():
-    f = tab_launch.exe_de_comando
-    ruta = "C:\\Users\\x\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"
-    assert f(f'"{ruta}" --open-url -- "%1"') == ruta
-    assert f(f'{ruta} --open-url -- "%1"') == ruta      # sin comillas y con espacios
+def test_exe_from_command():
+    f = tab_launch.exe_from_command
+    path = "C:\\Users\\x\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"
+    assert f(f'"{path}" --open-url -- "%1"') == path
+    assert f(f'{path} --open-url -- "%1"') == path      # unquoted and with spaces
     assert f("C:\\vsc\\CODE.EXE") == "C:\\vsc\\CODE.EXE"
     assert f("") is None and f(None) is None and f('"') is None
 
 
-def test_code_exe_forzado_gana_al_registro(entorno, tmp_path):
-    otro = tmp_path / "otro" / "Code.exe"
-    otro.parent.mkdir()
-    otro.write_bytes(b"")
-    assert tab_launch.resolver_code_exe(str(otro)) == (str(otro), "--code-exe")
+def test_forced_code_exe_beats_the_registry(harness, tmp_path):
+    other = tmp_path / "other" / "Code.exe"
+    other.parent.mkdir()
+    other.write_bytes(b"")
+    assert tab_launch.resolve_code_exe(str(other)) == (str(other), "--code-exe")
 
 
-def test_code_exe_forzado_inexistente_no_cae_al_registro(entorno, tmp_path):
-    with pytest.raises(tab_launch.TabLaunchError, match="no existe"):
-        tab_launch.resolver_code_exe(str(tmp_path / "nada" / "Code.exe"))
+def test_nonexistent_forced_code_exe_does_not_fall_back_to_the_registry(harness, tmp_path):
+    with pytest.raises(tab_launch.TabLaunchError, match="does not exist"):
+        tab_launch.resolve_code_exe(str(tmp_path / "nothing" / "Code.exe"))
 
 
-def test_code_exe_forzado_rechaza_wrapper_cmd(entorno, tmp_path):
+def test_forced_code_exe_rejects_cmd_wrapper(harness, tmp_path):
     wrapper = tmp_path / "code.cmd"
     wrapper.write_text("@echo off\n", encoding="utf-8")
     with pytest.raises(tab_launch.TabLaunchError, match="wrapper"):
-        tab_launch.resolver_code_exe(str(wrapper))
+        tab_launch.resolve_code_exe(str(wrapper))
 
 
-def test_code_exe_sale_del_registro(entorno):
-    assert tab_launch.resolver_code_exe() == (str(entorno.code_exe), "registro")
+def test_code_exe_comes_from_the_registry(harness):
+    assert tab_launch.resolve_code_exe() == (str(harness.code_exe), "registry")
 
 
-def test_sin_registro_usa_el_ultimo_recurso(entorno, monkeypatch, tmp_path):
-    respaldo = tmp_path / "respaldo" / "Code.exe"
-    respaldo.parent.mkdir()
-    respaldo.write_bytes(b"")
-    monkeypatch.setattr(tab_launch, "leer_comando_registro", lambda: None)
-    monkeypatch.setattr(tab_launch, "candidatos_ultimo_recurso",
-                        lambda: [str(tmp_path / "no" / "Code.exe"), str(respaldo)])
-    assert tab_launch.resolver_code_exe() == (str(respaldo), "ultimo-recurso")
+def test_without_registry_it_uses_the_last_resort(harness, monkeypatch, tmp_path):
+    backup = tmp_path / "backup" / "Code.exe"
+    backup.parent.mkdir()
+    backup.write_bytes(b"")
+    monkeypatch.setattr(tab_launch, "read_registry_command", lambda: None)
+    monkeypatch.setattr(tab_launch, "last_resort_candidates",
+                        lambda: [str(tmp_path / "no" / "Code.exe"), str(backup)])
+    assert tab_launch.resolve_code_exe() == (str(backup), "last-resort")
 
 
-def test_registro_que_apunta_a_un_exe_borrado_cae_al_ultimo_recurso(entorno, monkeypatch,
-                                                                   tmp_path, capsys):
-    respaldo = tmp_path / "respaldo" / "Code.exe"
-    respaldo.parent.mkdir()
-    respaldo.write_bytes(b"")
-    monkeypatch.setattr(tab_launch, "leer_comando_registro",
-                        lambda: '"C:\\ya\\no\\existe\\Code.exe" --open-url -- "%1"')
-    monkeypatch.setattr(tab_launch, "candidatos_ultimo_recurso", lambda: [str(respaldo)])
-    assert tab_launch.resolver_code_exe() == (str(respaldo), "ultimo-recurso")
-    assert "registro" in capsys.readouterr().err  # el descarte deja rastro
+def test_registry_pointing_to_a_deleted_exe_falls_back_to_the_last_resort(harness, monkeypatch,
+                                                                         tmp_path, capsys):
+    backup = tmp_path / "backup" / "Code.exe"
+    backup.parent.mkdir()
+    backup.write_bytes(b"")
+    monkeypatch.setattr(tab_launch, "read_registry_command",
+                        lambda: '"C:\\gone\\no\\longer\\Code.exe" --open-url -- "%1"')
+    monkeypatch.setattr(tab_launch, "last_resort_candidates", lambda: [str(backup)])
+    assert tab_launch.resolve_code_exe() == (str(backup), "last-resort")
+    assert "registry" in capsys.readouterr().err  # the discard leaves a trace
 
 
-def test_ultimo_recurso_incluye_la_ruta_conocida(monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", "D:\\otro\\Local")
-    rutas = tab_launch.candidatos_ultimo_recurso()
-    assert rutas[0] == os.path.join("D:\\otro\\Local", "Programs", "Microsoft VS Code",
+def test_last_resort_includes_the_known_path(monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", "D:\\other\\Local")
+    paths = tab_launch.last_resort_candidates()
+    assert paths[0] == os.path.join("D:\\other\\Local", "Programs", "Microsoft VS Code",
                                     "Code.exe")
-    assert rutas[-1] == tab_launch.CODE_EXE_ULTIMO_RECURSO
+    assert paths[-1] == tab_launch.CODE_EXE_LAST_RESORT
 
 
-def test_code_exe_no_encontrado_devuelve_exit_1_sin_lanzar(entorno, monkeypatch, capsys):
-    monkeypatch.setattr(tab_launch, "leer_comando_registro", lambda: None)
-    monkeypatch.setattr(tab_launch, "candidatos_ultimo_recurso", lambda: ["C:\\no\\Code.exe"])
+def test_code_exe_not_found_returns_exit_1_without_launching(harness, monkeypatch, capsys):
+    monkeypatch.setattr(tab_launch, "read_registry_command", lambda: None)
+    monkeypatch.setattr(tab_launch, "last_resort_candidates", lambda: ["C:\\no\\Code.exe"])
     rc = tab_launch.main(["--json"])
     payload, err = _json_stdout(capsys)
     assert rc == 1
     assert "Code.exe" in payload["error"] and "--code-exe" in payload["error"]
-    assert entorno.fake.eventos == []
+    assert harness.fake.events == []
 
 
-# ------------------------------------------------------------------ otros errores
+# ------------------------------------------------------------------ other errors
 
-def test_code_exe_con_exit_distinto_de_cero_devuelve_exit_1(entorno, capsys):
-    fake = entorno.subprocess([BASE, BASE + [NUEVA]], code_exit=9,
-                              code_salida="Code.exe: bad option: --open-url\n")
+def test_code_exe_with_nonzero_exit_returns_exit_1(harness, capsys):
+    fake = harness.subprocess([BASE, BASE + [NEW]], code_exit=9,
+                              code_output="Code.exe: bad option: --open-url\n")
     rc = tab_launch.main(["--json"])
     payload, err = _json_stdout(capsys)
     assert rc == 1
     assert "exit 9" in payload["error"] and "bad option: --open-url" in payload["error"]
-    assert len(fake.run_calls) == 1, "solo la foto: con la URI sin abrir no hay nada que sondear"
-    ultima = entorno.lineas_log()[-1]
-    assert ultima["resultado"] == "error" and ultima["lanzado"] is False
+    assert len(fake.run_calls) == 1, "only the snapshot: with the URI unopened there is nothing to poll"
+    last = harness.log_lines()[-1]
+    assert last["result"] == "error" and last["launched"] is False
 
 
-def test_code_exe_que_no_se_puede_ejecutar_devuelve_exit_1(entorno, capsys):
-    entorno.subprocess([BASE], popen_error=OSError(5, "Acceso denegado"))
+def test_code_exe_that_cannot_be_run_returns_exit_1(harness, capsys):
+    harness.subprocess([BASE], popen_error=OSError(5, "Access denied"))
     rc = tab_launch.main(["--json"])
     payload, _ = _json_stdout(capsys)
-    assert rc == 1 and "no se pudo ejecutar" in payload["error"]
+    assert rc == 1 and "could not run" in payload["error"]
 
 
-def test_claude_no_encontrado_devuelve_exit_1_sin_lanzar(entorno, capsys):
-    entorno.claude(None)
+def test_claude_not_found_returns_exit_1_without_launching(harness, capsys):
+    harness.claude(None)
     rc = tab_launch.main(["--json"])
     payload, _ = _json_stdout(capsys)
     assert rc == 1 and "claude" in payload["error"]
-    assert entorno.fake.eventos == []
+    assert harness.fake.events == []
 
 
-def test_fuera_de_windows_devuelve_exit_1_sin_lanzar(entorno, monkeypatch, capsys):
-    monkeypatch.setattr(tab_launch, "es_windows", lambda: False)
+def test_outside_windows_returns_exit_1_without_launching(harness, monkeypatch, capsys):
+    monkeypatch.setattr(tab_launch, "is_windows", lambda: False)
     rc = tab_launch.main(["--json"])
     payload, _ = _json_stdout(capsys)
     assert rc == 1 and "Windows" in payload["error"]
-    assert entorno.fake.eventos == []
+    assert harness.fake.events == []
 
 
-def test_si_falla_la_foto_inicial_no_se_lanza(entorno, capsys):
-    fake = entorno.subprocess([(1, "", "sin sesion")])
+def test_if_the_initial_snapshot_fails_nothing_is_launched(harness, capsys):
+    fake = harness.subprocess([(1, "", "no session")])
     rc = tab_launch.main(["--json"])
     payload, _ = _json_stdout(capsys)
-    assert rc == 1 and "sin sesion" in payload["error"]
-    assert fake.popen_calls == [], "sin foto no se puede distinguir la pestaña nueva"
+    assert rc == 1 and "no session" in payload["error"]
+    assert fake.popen_calls == [], "without a snapshot the new tab cannot be told apart"
 
 
-def test_json_invalido_de_claude_agents_es_error(entorno, capsys):
-    fake = entorno.subprocess(["esto no es json"])
+def test_invalid_json_from_claude_agents_is_an_error(harness, capsys):
+    fake = harness.subprocess(["this is not json"])
     assert tab_launch.main(["--json"]) == 1
     assert fake.popen_calls == []
 
 
-def test_error_de_uso_sale_con_1_y_no_con_2(entorno, capsys):
-    # argparse usa 2 para errores de uso; aca 2 es "timeout" y el Router lo leeria mal.
-    for argv in (["--timeout", "abc"], ["--timeout", "0"], ["--opcion-inexistente"]):
+def test_usage_error_exits_with_1_not_2(harness, capsys):
+    # argparse uses 2 for usage errors; here 2 is "timeout" and the Router would misread it.
+    for argv in (["--timeout", "abc"], ["--timeout", "0"], ["--nonexistent-option"]):
         with pytest.raises(SystemExit) as exc:
             tab_launch.main(argv)
         assert exc.value.code == 1, argv
-    assert entorno.fake.eventos == []
+    assert harness.fake.events == []
 
 
 # ------------------------------------------------------------------ log
 
-def test_log_es_append_only_con_hora_art_thread_uri_y_resultado(entorno, capsys):
-    entorno.subprocess([BASE, BASE + [NUEVA]])
-    assert tab_launch.main(["--thread", "thread-uno", "--json"]) == 0
-    primeras = entorno.lineas_log()
-    assert [x["evento"] for x in primeras] == ["lanzado", "resultado"]
+def test_log_is_append_only_with_art_time_thread_uri_and_result(harness, capsys):
+    harness.subprocess([BASE, BASE + [NEW]])
+    assert tab_launch.main(["--thread", "thread-one", "--json"]) == 0
+    first = harness.log_lines()
+    assert [x["event"] for x in first] == ["launched", "result"]
 
-    entorno.subprocess([BASE])
-    assert tab_launch.main(["--thread", "thread-dos", "--timeout", "2", "--json"]) == 2
-    todas = entorno.lineas_log()
-    assert todas[:2] == primeras, "las lineas viejas no se reescriben"
-    assert [x["evento"] for x in todas] == ["lanzado", "resultado", "lanzado", "resultado"]
+    harness.subprocess([BASE])
+    assert tab_launch.main(["--thread", "thread-two", "--timeout", "2", "--json"]) == 2
+    everything = harness.log_lines()
+    assert everything[:2] == first, "the old lines are not rewritten"
+    assert [x["event"] for x in everything] == ["launched", "result", "launched", "result"]
 
-    for linea in todas:
-        assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ART", linea["ts"])
-        assert linea["uri"] == tab_launch.URI_BASE
-    assert [x["thread_id"] for x in todas] == ["thread-uno"] * 2 + ["thread-dos"] * 2
-    ok, vencido = todas[1], todas[3]
-    assert ok["resultado"] == "ok" and ok["session_id"] == NUEVA["sessionId"]
+    for line in everything:
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ART", line["ts"])
+        assert line["uri"] == tab_launch.URI_BASE
+    assert [x["thread_id"] for x in everything] == ["thread-one"] * 2 + ["thread-two"] * 2
+    ok, expired = everything[1], everything[3]
+    assert ok["result"] == "ok" and ok["session_id"] == NEW["sessionId"]
     assert ok["native_name"] == "myproject-b3" and ok["exit_code"] == 0
-    assert vencido["resultado"] == "timeout" and vencido["exit_code"] == 2
+    assert expired["result"] == "timeout" and expired["exit_code"] == 2
 
 
-def test_log_que_no_se_puede_escribir_no_corta_el_lanzamiento(entorno, monkeypatch, capsys,
-                                                             tmp_path):
-    bloqueo = tmp_path / "soy_un_archivo"
-    bloqueo.write_text("x", encoding="utf-8")
-    monkeypatch.setattr(tab_launch, "LOG_PATH", bloqueo / "tab_launch.log")
-    entorno.subprocess([BASE, BASE + [NUEVA]])
+def test_log_that_cannot_be_written_does_not_cut_the_launch(harness, monkeypatch, capsys,
+                                                           tmp_path):
+    blocker = tmp_path / "i_am_a_file"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(tab_launch, "LOG_PATH", blocker / "tab_launch.log")
+    harness.subprocess([BASE, BASE + [NEW]])
     assert tab_launch.main(["--json"]) == 0
     payload, err = _json_stdout(capsys)
-    assert payload["session_id"] == NUEVA["sessionId"]
-    assert "no se pudo escribir el log" in err
+    assert payload["session_id"] == NEW["sessionId"]
+    assert "could not write the log" in err
 
 
-def test_hora_art_sale_del_reloj():
+def test_art_time_comes_from_the_clock():
     from datetime import datetime, timedelta, timezone
-    antes = datetime.now(timezone.utc)
-    sello = tab_launch.ahora_art()
-    assert sello.endswith(" ART")
-    leido = datetime.strptime(sello[:-4], "%Y-%m-%d %H:%M:%S").replace(
+    before = datetime.now(timezone.utc)
+    stamp = tab_launch.now_art()
+    assert stamp.endswith(" ART")
+    read = datetime.strptime(stamp[:-4], "%Y-%m-%d %H:%M:%S").replace(
         tzinfo=timezone(timedelta(hours=-3)))
-    assert abs((leido - antes).total_seconds()) < 5
+    assert abs((read - before).total_seconds()) < 5
