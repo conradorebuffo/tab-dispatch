@@ -81,7 +81,7 @@ test('dos pestañas iguales: duplicada y no actúa', () => {
 });
 
 test('título largo recortado: actúa con match truncado', () => {
-  const titulo = 'S12-ExtensionTitleTooLongX'; // 26 chars
+  const titulo = 'T1234-LongTitleForTheTests'; // 26 chars
   const label = titulo.slice(0, 24) + '…';
   const r = cotejar([claude(label), claude('S1-Otro')], titulo);
   assert.strictEqual(r.accion, 'actuar');
@@ -89,13 +89,13 @@ test('título largo recortado: actúa con match truncado', () => {
 });
 
 test('recorte desactivado: no_existe', () => {
-  const titulo = 'S12-ExtensionTitleTooLongX';
+  const titulo = 'T1234-LongTitleForTheTests';
   const r = cotejar([claude(titulo.slice(0, 24) + '…')], titulo, { permitirTruncado: false });
   assert.strictEqual(r.accion, 'no_existe');
 });
 
 test('dos recortadas con el mismo prefijo: duplicada', () => {
-  const titulo = 'S12-ExtensionTitleTooLongX';
+  const titulo = 'T1234-LongTitleForTheTests';
   const label = titulo.slice(0, 24) + '…';
   const r = cotejar([claude(label), claude(label)], titulo);
   assert.strictEqual(r.accion, 'duplicada');

@@ -24,11 +24,11 @@ CLAVES_SALIDA = {"session_id", "native_name", "status", "elapsed_s", "thread_id"
 
 
 def _agente(sid, name, status="idle", kind="interactive"):
-    return {"pid": 1, "cwd": "c:\\myproject", "kind": kind, "startedAt": 1793826600887,
+    return {"pid": 1, "cwd": "c:\\work", "kind": kind, "startedAt": 1793826600887,
             "sessionId": sid, "name": name, "status": status}
 
 
-VIEJA_1 = _agente("11111111-0000-4000-8000-000000000001", "S76-RouterTest", "busy")
+VIEJA_1 = _agente("11111111-0000-4000-8000-000000000001", "T1111-ParentTab", "busy")
 VIEJA_2 = _agente("22222222-0000-4000-8000-000000000002", "myproject-5c")
 NUEVA = _agente("bbbbbbbb-0000-4000-8000-0000000000b3", "myproject-b3")
 NUEVA_2 = _agente("cccccccc-0000-4000-8000-0000000000c0", "myproject-c0")
