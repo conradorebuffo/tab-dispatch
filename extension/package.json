@@ -1,0 +1,22 @@
+{
+  "name": "claude-tab-dispatch",
+  "displayName": "Claude Tab Dispatch",
+  "description": "Closes and focuses Claude Code tabs by exact title, through a vscode:// URI backed by a pre-written request.",
+  "publisher": "conradorebuffo",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/conradorebuffo/claude-tab-dispatch.git"
+  },
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onUri"
+  ],
+  "main": "./extension.js"
+}
