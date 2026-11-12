@@ -71,7 +71,7 @@ def detect_extension_version() -> str:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Check the environment for claude-tab-dispatch.")
+    ap = argparse.ArgumentParser(description="Check the environment for tab-dispatch.")
     ap.add_argument("--claude-code", default=None, help="version string; default: `claude --version`")
     ap.add_argument("--extension", default=None, help="version string; default: installed extension")
     ap.add_argument("--platform", default=sys.platform)

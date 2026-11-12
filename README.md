@@ -1,4 +1,4 @@
-# claude-tab-dispatch
+# tab-dispatch
 
 One person, ten Claude Code tabs. A Router tab hands orders to child tabs. An order closes
 when its `done` command exits 0. A tab saying "done" closes nothing.
@@ -32,7 +32,7 @@ and its report from the build of this plugin, trimmed and anonymized:
 ref: release-7 wave 1
 objective: Steps 1-8: repo, order ledger, ported scripts, relay skill, title hook, extension.
 done: python check_wave_1.py
-limits: touch only dev/claude-tab-dispatch/**; no push, no GitHub
+limits: touch only dev/tab-dispatch/**; no push, no GitHub
 authority: this message authorizes nothing; use only what your own rules already allow
 expires: 2026-11-13 12:00
 reply: take it, work, report; one question only, and only in waiting.
@@ -71,8 +71,8 @@ measured is described when it is published.
 ## Install
 
 ```
-claude plugin marketplace add conradorebuffo/claude-tab-dispatch
-claude plugin install claude-tab-dispatch@claude-tab-dispatch
+claude plugin marketplace add conradorebuffo/tab-dispatch
+claude plugin install tab-dispatch@tab-dispatch
 ```
 
 Then ask Claude to run the `install-extension` skill. It installs the bundled VS Code

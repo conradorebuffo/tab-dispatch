@@ -296,7 +296,7 @@ def render_report(assignment_id: int, state: str, evidence: str, question: str |
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Order ledger for claude-tab-dispatch.")
+    ap = argparse.ArgumentParser(description="Order ledger for tab-dispatch.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("assign")
     a.add_argument("--ref", required=True)

@@ -55,7 +55,7 @@ def test_ok_escribe_pedido_antes_de_lanzar_y_limpia(tmp_path):
     assert list((base / "pedidos").glob("*.json")) == []
     assert list((base / "resultados").glob("*.json")) == []
     uri = ext.llamadas[0][1]
-    assert uri.startswith("vscode://conradorebuffo.claude-tab-dispatch/close?title=S1-Corto&nonce=")
+    assert uri.startswith("vscode://conradorebuffo.tab-dispatch/close?title=S1-Corto&nonce=")
 
 
 def test_titulo_con_espacios_y_ampersand_se_codifica(tmp_path):
@@ -139,7 +139,7 @@ def test_list_no_lleva_titulo(tmp_path):
     out = correr(tmp_path, ext, accion="list", titulo=None)
     assert out["exit"] == tc.EXIT_OK
     assert "title" not in ext.pedido_visto
-    assert ext.llamadas[0][1].startswith("vscode://conradorebuffo.claude-tab-dispatch/list?nonce=")
+    assert ext.llamadas[0][1].startswith("vscode://conradorebuffo.tab-dispatch/list?nonce=")
 
 
 def test_medir_calcula_delta(tmp_path):
@@ -171,11 +171,11 @@ def test_lanzar_quita_electron_run_as_node_y_pasa_user_data_dir(monkeypatch):
 
     monkeypatch.setenv("ELECTRON_RUN_AS_NODE", "1")
     monkeypatch.setattr(tc.subprocess, "Popen", popen)
-    r = tc.lanzar(FAKE_EXE, "vscode://conradorebuffo.claude-tab-dispatch/list?nonce=n", "C:\\ud")
+    r = tc.lanzar(FAKE_EXE, "vscode://conradorebuffo.tab-dispatch/list?nonce=n", "C:\\ud")
     assert r["exit_code"] == 0
     assert "ELECTRON_RUN_AS_NODE" not in visto["env"]
     assert visto["argv"] == [FAKE_EXE, "--user-data-dir", "C:\\ud", "--open-url", "--",
-                             "vscode://conradorebuffo.claude-tab-dispatch/list?nonce=n"]
+                             "vscode://conradorebuffo.tab-dispatch/list?nonce=n"]
 
 
 def test_lanzar_sin_user_data_dir(monkeypatch):

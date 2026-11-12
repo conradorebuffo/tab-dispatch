@@ -1,14 +1,14 @@
 #!/usr/bin/env python
-"""tab_control: cerrar o enfocar una pestaña de Claude Code vía la extensión conradorebuffo.claude-tab-dispatch.
+"""tab_control: cerrar o enfocar una pestaña de Claude Code vía la extensión conradorebuffo.tab-dispatch.
 
 Es el MECANISMO: no decide si una pestaña se puede cerrar (eso es la política del Router). Pasos de cada acción:
 
 1. Comprueba que la instancia de VS Code destino esté corriendo. Si no, no lanza nada: con
    ``--open-url`` Code.exe abriría un VS Code nuevo.
-2. Escribe el PEDIDO ``%LOCALAPPDATA%\\ClaudeTabDispatch\\pedidos\\<nonce>.json`` (accion, title, creado).
+2. Escribe el PEDIDO ``%LOCALAPPDATA%\\TabDispatch\\pedidos\\<nonce>.json`` (accion, title, creado).
    La extensión sólo actúa si ese archivo existe, coincide y tiene menos de 60 s: el nonce de la
    URI solo no autoriza nada .
-3. Lanza ``Code.exe [--user-data-dir X] --open-url -- vscode://conradorebuffo.claude-tab-dispatch/<accion>?...``
+3. Lanza ``Code.exe [--user-data-dir X] --open-url -- vscode://conradorebuffo.tab-dispatch/<accion>?...``
    reusando ``resolver_code_exe`` y ``entorno_hijo`` de ``tab_launch.py``.
 4. Espera ``resultados/<nonce>.json`` hasta ``--timeout`` y lo traduce a un exit code.
 
@@ -33,7 +33,7 @@ from urllib.parse import quote
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tab_launch  # noqa: E402  (se reusa resolver_code_exe, entorno_hijo, ahora_art)
 
-URI_BASE = "vscode://conradorebuffo.claude-tab-dispatch"
+URI_BASE = "vscode://conradorebuffo.tab-dispatch"
 ACCIONES = ("list", "close", "focus")
 TIMEOUT_DEFAULT_S = 15.0
 SONDEO_S = 0.25
@@ -57,7 +57,7 @@ class TabControlError(Exception):
 def base_dir():
     """Carpeta de intercambio con la extensión (la misma que usa ``extension.js``)."""
     local = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
-    return Path(local) / "ClaudeTabDispatch"
+    return Path(local) / "TabDispatch"
 
 
 def build_uri(accion, titulo, nonce):

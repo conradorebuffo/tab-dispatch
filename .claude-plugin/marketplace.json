@@ -1,14 +1,14 @@
 {
-  "name": "claude-tab-dispatch",
+  "name": "tab-dispatch",
   "owner": {
     "name": "Conrado Rebuffo"
   },
   "plugins": [
     {
-      "name": "claude-tab-dispatch",
+      "name": "tab-dispatch",
       "source": "./",
       "description": "A Router tab hands orders to child tabs; an order closes only when its done command exits 0."
     }
   ],
-  "description": "Marketplace for claude-tab-dispatch."
+  "description": "Marketplace for tab-dispatch."
 }

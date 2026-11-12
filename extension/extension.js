@@ -1,6 +1,6 @@
 'use strict';
-// Mini extension conradorebuffo.claude-tab-dispatch.
-// Maneja vscode://conradorebuffo.claude-tab-dispatch/{list|close|focus}?title=..&nonce=<uuid>
+// Mini extension conradorebuffo.tab-dispatch.
+// Maneja vscode://conradorebuffo.tab-dispatch/{list|close|focus}?title=..&nonce=<uuid>
 // Sólo toca pestañas de Claude Code (webview claudeVSCodePanel), por título exacto.
 
 const vscode = require('vscode');
@@ -11,7 +11,7 @@ const { cotejar, validarEntrada, validarPedido } = require('./lib/cotejo');
 
 function baseDir() {
   const local = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-  return path.join(local, 'ClaudeTabDispatch');
+  return path.join(local, 'TabDispatch');
 }
 
 function tabsActuales() {
@@ -56,7 +56,7 @@ function registrarLog(obj) {
     fs.mkdirSync(baseDir(), { recursive: true });
     fs.appendFileSync(path.join(baseDir(), 'log.jsonl'), JSON.stringify(obj) + '\n', 'utf8');
   } catch (e) {
-    console.error('[conradorebuffo.claude-tab-dispatch] no pude escribir el log:', e);
+    console.error('[conradorebuffo.tab-dispatch] no pude escribir el log:', e);
   }
 }
 
@@ -67,14 +67,14 @@ function consumirPedido(nonce, uri) {
   try {
     pedido = JSON.parse(fs.readFileSync(archivo, 'utf8'));
   } catch (e) {
-    if (e && e.code !== 'ENOENT') console.error('[conradorebuffo.claude-tab-dispatch] pedido ilegible:', e);
+    if (e && e.code !== 'ENOENT') console.error('[conradorebuffo.tab-dispatch] pedido ilegible:', e);
     pedido = null;
   }
   if (pedido !== null) {
     try {
       fs.unlinkSync(archivo);
     } catch (e) {
-      console.error('[conradorebuffo.claude-tab-dispatch] no pude borrar el pedido, no se actúa:', e);
+      console.error('[conradorebuffo.tab-dispatch] no pude borrar el pedido, no se actúa:', e);
       return { ok: false, motivo: 'pedido_no_consumible' };
     }
   }
@@ -109,7 +109,7 @@ async function manejar(uri) {
       fs.mkdirSync(baseDir(), { recursive: true });
       fs.appendFileSync(path.join(baseDir(), 'log.jsonl'), JSON.stringify({ ...base, ok: false, motivo: error }) + '\n', 'utf8');
     } catch (e) {
-      console.error('[conradorebuffo.claude-tab-dispatch] no pude escribir el log:', e);
+      console.error('[conradorebuffo.tab-dispatch] no pude escribir el log:', e);
     }
     return;
   }
@@ -143,7 +143,7 @@ async function manejar(uri) {
   try {
     escribirResultado(nonce, resultado);
   } catch (e) {
-    console.error('[conradorebuffo.claude-tab-dispatch] no pude escribir el resultado:', e);
+    console.error('[conradorebuffo.tab-dispatch] no pude escribir el resultado:', e);
   }
 }
 
