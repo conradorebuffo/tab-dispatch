@@ -49,6 +49,30 @@ Limits: an order has at most 1500 characters and a report at most 600. A report 
 line, an exit code), never narrated. The full specification is in
 [docs/CONTRACT.md](docs/CONTRACT.md).
 
+## A working session
+
+What 0.2 adds are the flows of a real session, each one small and kept in files and in the
+ledger:
+
+- **Names.** A tab is named `S<n>-<Title>`: `S1-Router`, `S2-PythonTests`. `<n>` is counted in
+  the ledger the first time a tab declares its role, and the name stays for the whole session.
+- **Model and effort per order.** `ledger assign --model sonnet --effort medium` writes
+  `model:` and `effort:` in the order. It is a declared requirement: no message switches the
+  model of another tab, so a child on another model reports `waiting`.
+- **Attention queue.** `ledger attention` shows what waits for the human, one item at a time:
+  questions, blocked and failed orders, plans to approve, paused threads. The `attention`
+  skill dispatches each answer.
+- **Plan orders.** `--kind plan`: the child writes `plans/NNN_slug.md` with one done command
+  per step and waits. After the human approves, it executes, and `ledger plan check` runs
+  every step's command.
+- **Threads.** A relay ends with `continue`, `pause` or `done` and leaves `threads/<id>.md`
+  (context, done, next step). A new session takes it up with `ledger thread resume`.
+- **Session report.** `ledger session report --out <file>` writes the orders, the exit codes
+  of the done checks, the times and the lessons recorded with `ledger lesson add`.
+- **Prompt count.** `scripts/prompt_count.py` counts, per tab, the messages the human typed and
+  the ones other tabs sent. Counts only: it never stores or prints the text of a message.
+  They are raw counts of one run; nothing is compared.
+
 ## The timeline, and its limit
 
 The design notes of this approach were timestamped on 2026-11-11 under RFC 3161 by two
@@ -65,6 +89,10 @@ measured is described when it is published.
   after the extension lists the sessions again (open the session history or reopen the
   window). Measured with the extension 2.1.322: it does not watch the title file. Until then
   every new tab reads "Claude Code", so closing by title is ambiguous and nothing is closed.
+- `model:` and `effort:` in an order are not enforced. A person sets them by typing `/model`
+  and `/effort` in the tab.
+- The prompt count cannot see an approved permission dialog: approving leaves no line in the
+  transcript.
 - A tab with an open VS Code dialog does not receive messages until a person closes the dialog.
 - File overlap between tabs is only a warning (`scripts/file_overlap.py`). For a real guard,
   use something like cotenancy-guard.
@@ -88,11 +116,12 @@ works and closing a tab is manual.
 | Piece | Where |
 |---|---|
 | Router doctrine | `agents/router.md` |
-| Child tab and relay skills | `skills/child-role`, `skills/relay`, `skills/install-extension` |
-| Order ledger (SQLite, `~/.claude/tab-dispatch/ledger.db`) | `scripts/ledger.py` |
+| Child tab, relay and attention skills | `skills/child-role`, `skills/relay`, `skills/attention`, `skills/install-extension` |
+| Order ledger (SQLite, `~/.claude/tab-dispatch/ledger.db`): orders, plans, threads, attention, session report | `scripts/ledger.py` |
 | Done check by exit code | `scripts/done_criterio.py` |
 | Tab launch and control | `scripts/tab_launch.py`, `scripts/tab_control.py`, `extension/` |
-| Tab title from the role and the order this tab accepted | `hooks/tab_title.py`, `scripts/titles.py` |
+| Tab title `S<n>-<Title>` from the role of the tab | `hooks/tab_title.py`, `scripts/titles.py` |
+| Prompt count per tab | `scripts/prompt_count.py` |
 
 Every figure in this README has its source in [docs/SOURCES.md](docs/SOURCES.md).
 

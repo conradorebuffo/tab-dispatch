@@ -1,6 +1,6 @@
 {
   "name": "tab-dispatch",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "One person, ten Claude Code tabs: a Router tab hands orders to child tabs, and an order closes only when its done command exits 0, not when a tab says it is done.",
   "author": {
     "name": "Conrado Rebuffo"
