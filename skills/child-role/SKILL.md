@@ -54,3 +54,24 @@ with `SendMessage`, as printed. Evidence goes by reference, never narrated.
 - `dropped`: you did not take the order.
 
 An order that says `kind: relay` or `kind: close` is handled by the `relay` skill.
+
+## Orders that name a model
+
+An order may carry `model:` and `effort:`. You cannot switch your own model. If you are on
+another one, do not start: report `waiting` with the question "This tab is on <model>; set
+/model <asked> here, or send the order to another tab?".
+
+## Plan orders (`kind: plan`)
+
+A plan order asks for the design first and the work after the human approves it.
+
+1. Write the plan as `plans/NNN_slug.md` in the project (`NNN` is the next free number). One
+   line per step, each with the command that proves it:
+   ```
+   - [ ] Step 1: add the search index  done: `python -m pytest tests/test_index.py -q`
+   ```
+2. Register it: `ledger plan register <id> --path plans/NNN_slug.md`.
+3. Report `waiting` with the question "Approve plans/NNN_slug.md?" and stop. Do not execute.
+4. When the Router says it is approved, take the order again (`ledger accept <id>`) and do the
+   steps in order. Check a step with `ledger plan check <id> --step N`; exit 0 lets you tick it.
+5. When `ledger plan check <id>` exits 0 for every step, report `ready`.

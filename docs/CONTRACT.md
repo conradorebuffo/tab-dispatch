@@ -26,7 +26,8 @@ reply: take it with "python scripts/ledger.py accept 303"; when done, "... repor
 | `objective` | What to do, in one line. |
 | `done` | The command whose exit code 0 closes the order. |
 | `limits` | What not to touch. Empty means the fixed rule: with production, credentials, third parties or GitHub, stop and report `waiting`. |
-| `kind` | Optional. `relay` or `close` for the `relay` skill; absent means a normal work order. |
+| `kind` | Optional. `plan` asks for a plan file first; `relay` or `close` go to the `relay` skill; absent means a normal work order. |
+| `model`, `effort` | Optional. What the Router wants the order to run on. A declared requirement: no message switches the model of another tab. A child on another model reports `waiting`. |
 | `authority` | Fixed text. The sender cannot change it. |
 | `expires` | Deadline, or `none declared`. |
 | `reply` | How to take the order and how to report. |
@@ -60,6 +61,20 @@ waiting | blocked | failed -> accepted
 `closed` happens only when the Router runs the `done` command and it exits 0. A report of
 `ready` is a notice; the exit code is the verdict. If the command does not exit 0 the order
 goes back to `accepted`.
+
+## Plan orders
+
+A `kind: plan` order has two halves. First the child writes `plans/NNN_slug.md`, one line per
+step with its own done command, registers it (`ledger plan register`) and reports `waiting`.
+Nothing is executed until the human approves and the Router records it (`ledger plan
+approve`). Then the child executes, and `ledger plan check` runs the done command of every
+step: the plan is done when each one exits 0.
+
+## Threads
+
+A relay ends with an outcome: `continue`, `pause` or `done`. The child writes
+`threads/<id>.md` (context, done, next step) with `ledger thread park`; a new session takes it
+up with `ledger thread resume`. A paused thread stays in the attention queue.
 
 ## What the contract does not do
 

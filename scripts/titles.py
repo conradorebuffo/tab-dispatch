@@ -53,10 +53,38 @@ def find_transcript(session_id: str | None) -> Path | None:
     return found[0] if len(found) == 1 else None
 
 
-def compute_title(role: dict | None, order_id: int | None = None) -> str | None:
-    """`Router` for the coordinator, `r-<id> <scope>` for a child with a live order."""
+_SKIP_WORDS = {"the", "of", "and", "to", "for", "in", "on", "a", "an", "with", "by", "at"}
+_MAX_WORDS = 4
+
+
+def canonical_name(number, name) -> str:
+    """`S<number>-<TitleInCamelCase>`: one hyphen, no spaces, at most four meaningful words.
+
+    (42, "State of the art report") -> "S42-StateArtReport". A name that already has the
+    `S<number>-` prefix is kept. Accents and punctuation go; a word keeps its own capitals
+    (API stays API). With no usable word the name is `S<number>-Session`.
+    """
+    import unicodedata
+
+    name = (name or "").strip()
+    if re.fullmatch(rf"S{number}-\S+", name):
+        return name
+    plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", plain) if w]
+    useful = [w for w in words if w.lower() not in _SKIP_WORDS] or words
+    title = "".join(w[:1].upper() + w[1:] for w in useful[:_MAX_WORDS])
+    return f"S{number}-{title or 'Session'}"
+
+
+def compute_title(role: dict | None, order_id: int | None = None, number: int | None = None) -> str | None:
+    """With the session `number`: `S<n>-Router` or `S<n>-<Scope>`, stable for the whole session.
+
+    Without it (0.1.x behavior): `Router`, or `r-<id> <scope>` for a child with a live order.
+    """
     if not role:
         return None
+    if number is not None:
+        return canonical_name(number, "Router" if role["role"] == "coord" else (role.get("scope") or "Child"))
     if role["role"] == "coord":
         return "Router"
     scope = (role.get("scope") or "child").strip()
@@ -77,22 +105,18 @@ def write_title(transcript_path: str, session_id: str, title: str) -> None:
 
 
 def title_for_session(session_id: str) -> str | None:
-    """The title this session should have now, from its role and the order IT accepted.
+    """The title this session should have now: `S<n>-Router` or `S<n>-<Scope>`.
 
-    Only an order whose `session_id` is this session counts (or, for orders accepted with
-    `--tab <session id>`, its `tab_title`). Before 0.1.1 the newest accepted order with no
-    owner was taken, so every child got the title of the last order accepted by anyone.
+    `<n>` is the session's own number in the ledger (`ledger.session_number`), given the first
+    time the session has a role. The title does not change with each order: which order a tab
+    holds is in the ledger (`ledger list`), and a stable name is a stable address.
     """
     import ledger  # local import: ledger imports this module too
 
     role = ledger.get_role(session_id)
-    order_id = None
-    if role and role["role"] == "child":
-        mine = [o for o in ledger.list_orders(live_only=True)
-                if o["state"] == "accepted"
-                and (o.get("session_id") == session_id or o.get("tab_title") == session_id)]
-        order_id = mine[-1]["id"] if mine else None
-    return compute_title(role, order_id)
+    if not role:
+        return None
+    return compute_title(role, number=ledger.session_number(session_id))
 
 
 def retitle(session_id: str | None, transcript_path: str | None = None) -> str | None:

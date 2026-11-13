@@ -33,11 +33,17 @@ Scripts live in the plugin folder: `${CLAUDE_PLUGIN_ROOT}/scripts`. Below, `ledg
 | declare yourself | `ledger role <your session id> coord "<scope>"` |
 | check file overlap | `python "${CLAUDE_PLUGIN_ROOT}/scripts/file_overlap.py" --files a.py,b.py` |
 | write an order | `ledger assign --ref <ref> --objective "<text>" --done "<command>" --files a.py,b.py [--limits "<text>"] [--deadline +2h]` |
+| order on a model | add `--model sonnet --effort medium` to `ledger assign` |
+| order a plan first | add `--kind plan` to `ledger assign` |
 | send it | `SendMessage` to the child's name, with `notify_when_idle: true` |
 | verify and close | `ledger close <id>` (exit 0 = closed) |
 | open a tab | `python "${CLAUDE_PLUGIN_ROOT}/scripts/tab_launch.py" --json` |
 | close or focus a tab | `python "${CLAUDE_PLUGIN_ROOT}/scripts/tab_control.py" close "<exact title>"` |
 | rebuild after compaction | `ledger list --live` |
+| what waits for the human | `ledger attention` (one item; `--all` or `--json` for every item) |
+| approve and verify a plan | `ledger plan approve <id>`, then `ledger plan check <id>` |
+| threads | `ledger thread list --status paused`, `ledger thread resume <thread>` |
+| end of the session | `ledger session report --out <file>`, `ledger lesson add "<text>"` |
 
 ## The life of an order
 
@@ -96,3 +102,52 @@ by hand it will not match, and the answer is a manual close.
 - Order anything that needs production, credentials, public surfaces or changes to the
   rules and settings of the repository: tell the human instead.
 - Order a close to a tab you do not conduct.
+
+## Model and effort per order
+
+Declare what an order should run on. Pick the cheapest row that fits the task:
+
+| Task | `--model` | `--effort` |
+|---|---|---|
+| Plan a feature, review a design, choose between options | `opus` | `high` |
+| Write code to a clear spec, fix a bug that has a failing test | `sonnet` | `medium` |
+| Run tests, validate a manifest, rename, format, collect figures | `haiku` | `low` |
+
+The order carries the requirement as `model:` and `effort:` lines. It does not switch
+anything: a tab runs on what its human set by typing `/model` and `/effort` in that tab. So
+send the order to a child that is already on that model, or ask the human to set it. A child
+on another model reports `waiting` and says which one it is on.
+
+## The attention queue
+
+When the human comes back, or asks what is pending, use the `attention` skill. `ledger
+attention` derives the queue from the ledger each time: questions of `waiting` orders,
+`blocked` and `failed` orders, plans to approve, paused threads. Show one item, take the
+answer, dispatch it, then show the next one.
+
+## Plan orders
+
+Work that needs a design first goes out as `--kind plan`. The child writes
+`plans/NNN_slug.md`, registers it and reports `waiting`. The queue lists it as
+`plan_to_approve`. Give the human the summary: the title, the steps and the done command of
+each step. A yes: `ledger plan approve <id>`, then tell the child, which takes the order again
+and executes. A no goes back to the child as text, and it writes the plan again. Verify with
+`ledger plan check <id>`: the done command of every step must exit 0. Use that command as the
+`done` of the plan order.
+
+## Threads
+
+Work that outlives a tab is a thread: one file, `threads/<id>.md`, with the context, what is
+done and the next step. A `relay` order ends with one of three outcomes:
+
+| Outcome | What you do |
+|---|---|
+| `continue` | Open a fresh tab now (`tab_launch.py`). Its first order: run `ledger thread resume <id>` and go on from the next step. |
+| `pause` | Nothing now. The thread waits in the attention queue as `paused_thread` until the human takes it up. |
+| `done` | The thread is closed. Tell the human in one sentence. |
+
+## End of the session
+
+`ledger session report --out <file>` writes the figures of the ledger: orders by state and
+kind, exit codes of the done checks, times, and the lessons recorded with `ledger lesson add`.
+Give the human the path. The figures are counts from the ledger; do not add an estimate.

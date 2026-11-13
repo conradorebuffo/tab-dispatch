@@ -186,3 +186,70 @@ def test_close_cli_exits_zero_with_non_ascii_done_output_on_a_cp1252_stdout(home
     sys.stdout.flush()
     assert "✔ pass 17".encode("utf-8") in raw.getvalue()
     assert ledger.get(oid)["state"] == "closed"
+
+
+# ---------------------------------------------------------------- 0.2: model, effort, report
+def test_model_and_effort_are_stored_and_printed_in_the_order():
+    oid = _new(model="sonnet", effort="medium")
+    row = ledger.get(oid)
+    assert (row["model"], row["effort"]) == ("sonnet", "medium")
+    text = ledger.render_order(oid)
+    assert "model: sonnet" in text and "effort: medium" in text
+    plain = ledger.render_order(_new())
+    assert "model:" not in plain and "effort:" not in plain
+
+
+def test_bad_model_or_effort_is_refused():
+    for kw, code in ((dict(effort="extreme"), "bad_effort"), (dict(model="two words"), "bad_model")):
+        with pytest.raises(ledger.LedgerError) as err:
+            _new(**kw)
+        assert err.value.code == code
+
+
+def test_assign_help_shows_model_and_effort(capsys):
+    with pytest.raises(SystemExit) as stop:
+        ledger.main(["assign", "--help"])
+    assert stop.value.code == 0
+    out = capsys.readouterr().out
+    assert "--model" in out and "--effort" in out
+
+
+def test_a_ledger_written_by_0_1_keeps_its_rows_and_takes_plan_orders(home):
+    import sqlite3
+    conn = sqlite3.connect(str(home / "ledger.db"))
+    conn.executescript(
+        "CREATE TABLE assignments (id INTEGER PRIMARY KEY AUTOINCREMENT, ref TEXT NOT NULL, "
+        "objective TEXT NOT NULL, done_cmd TEXT NOT NULL, limits TEXT, "
+        "kind TEXT NOT NULL DEFAULT 'work' CHECK (kind IN ('work','relay','close')), "
+        "files TEXT NOT NULL DEFAULT '[]', state TEXT NOT NULL DEFAULT 'offered', tab_title TEXT, "
+        "evidence TEXT, question TEXT, deadline TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+        "INSERT INTO assignments (ref, objective, done_cmd, created_at, updated_at) "
+        "VALUES ('old', 'kept', 'exit 0', '2026-11-12T10:00:00-03:00', '2026-11-12T10:00:00-03:00');")
+    conn.commit()
+    conn.close()
+    assert ledger.get(1)["ref"] == "old" and ledger.get(1)["model"] is None
+    new = _new(kind="plan", model="opus")
+    assert new == 2 and ledger.get(new)["kind"] == "plan"
+
+
+def test_every_done_check_is_recorded_and_the_report_counts_them(home):
+    good, bad = _new(), _new(done_cmd="python -c \"import sys; sys.exit(4)\"")
+    for oid in (good, bad):
+        ledger.accept(oid)
+        ledger.report(oid, "ready", "see the done command")
+        ledger.close(oid)
+    ledger.lesson_add("a done command must not depend on the tab's own word", order_id=good)
+    out = home / "reports" / "session.md"
+    info = ledger.session_report(out)
+    text = out.read_text(encoding="utf-8")
+    assert info["orders"] == 2 and info["closed"] == 1 and info["checks"] == 2 and info["lessons"] == 1
+    for part in ("## Orders", "- total: 2", "## Exit codes", "closed by exit 0 of their done command: 1 of 2",
+                 "(exit 0: 1, any other exit: 1)", "## Times", "## Lessons", f"(r-{good}) a done command"):
+        assert part in text
+
+
+def test_session_report_from_the_command_line(home, capsys):
+    assert ledger.main(["session", "report", "--out", str(home / "r.md")]) == 0
+    assert "## Exit codes" in (home / "r.md").read_text(encoding="utf-8")
+    assert ledger.main(["lesson", "add", "keep orders short"]) == 0
+    assert "keep orders short" in ledger.lessons_path().read_text(encoding="utf-8")
