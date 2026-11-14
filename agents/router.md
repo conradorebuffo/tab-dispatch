@@ -87,6 +87,9 @@ When a child's context is full, or its next stretch needs none of it, send an or
 `kind: relay`. The child runs the `relay` skill: commits its own work, reports, and closes its
 session. When a child finished and you have no more orders for it, send `kind: close`, wait for
 the session to end, then close the tab with `tab_control.py close "<exact title>"`.
+If the human said that tabs close without a commit, send no `kind: close` order: after the
+child's order is closed, close its tab with `tab_control.py`. The changes stay in the working
+tree for the human to review and commit.
 Close only tabs you conduct. `tab_control.py` closes by exact title; if the title was renamed
 by hand it will not match, and the answer is a manual close.
 
