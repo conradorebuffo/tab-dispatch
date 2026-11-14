@@ -105,13 +105,14 @@ by hand it will not match, and the answer is a manual close.
 
 ## Model and effort per order
 
-Declare what an order should run on. Pick the cheapest row that fits the task:
+Declare what an order should run on. Pick the cheapest row that fits the task. Sessions do not
+run on `haiku`: `sonnet` is the floor.
 
 | Task | `--model` | `--effort` |
 |---|---|---|
 | Plan a feature, review a design, choose between options | `opus` | `high` |
 | Write code to a clear spec, fix a bug that has a failing test | `sonnet` | `medium` |
-| Run tests, validate a manifest, rename, format, collect figures | `haiku` | `low` |
+| Run tests, validate a manifest, rename, format, collect figures | `sonnet` | `low` |
 
 The order carries the requirement as `model:` and `effort:` lines. It does not switch
 anything: a tab runs on what its human set by typing `/model` and `/effort` in that tab. So
