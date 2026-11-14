@@ -148,3 +148,40 @@ def test_hook_titles_a_session_given_a_git_bash_path(tmp_path, monkeypatch):
     before = len(p.read_text(encoding="utf-8").splitlines())
     _run(monkeypatch, {"session_id": "sess-gb", "transcript_path": posix})
     assert len(p.read_text(encoding="utf-8").splitlines()) == before + 1
+
+
+def test_hook_prints_the_title_for_claude_code_on_a_message(tmp_path, monkeypatch, capsys):
+    t = _transcript(tmp_path)
+    ledger.set_role("sess-1", "child", "ticket order")
+    lines_before = len(t.read_text(encoding="utf-8").splitlines())
+    payload = {"session_id": "sess-1", "transcript_path": str(t), "hook_event_name": "UserPromptSubmit"}
+    assert _run(monkeypatch, payload) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["hookSpecificOutput"] == {"hookEventName": "UserPromptSubmit", "sessionTitle": "S1-TicketOrder"}
+    lines_after = len(t.read_text(encoding="utf-8").splitlines())
+    assert lines_after == lines_before + 1
+    # The next message has nothing new: no output, and the transcript does not grow.
+    assert _run(monkeypatch, payload) == 0
+    assert capsys.readouterr().out == ""
+    assert len(t.read_text(encoding="utf-8").splitlines()) == lines_after
+
+
+def test_hook_announces_the_title_before_the_transcript_exists(tmp_path, monkeypatch, capsys):
+    ledger.set_role("sess-new", "child", "docs")
+    payload = {"session_id": "sess-new", "transcript_path": str(tmp_path / "none.jsonl"),
+               "hook_event_name": "UserPromptSubmit"}
+    assert _run(monkeypatch, payload) == 0
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["sessionTitle"] == "S1-Docs"
+
+
+def test_hook_prints_nothing_without_a_role(tmp_path, monkeypatch, capsys):
+    t = _transcript(tmp_path)
+    payload = {"session_id": "sess-1", "transcript_path": str(t), "hook_event_name": "UserPromptSubmit"}
+    assert _run(monkeypatch, payload) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_hooks_json_runs_the_title_hook_at_start_and_at_each_message():
+    hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    for event in ("SessionStart", "UserPromptSubmit"):
+        assert "tab_title.py" in hooks[event][0]["hooks"][0]["command"]

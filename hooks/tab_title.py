@@ -1,12 +1,16 @@
-"""SessionStart hook: title the tab from the role declared in the order ledger.
+"""SessionStart and UserPromptSubmit hook: title the tab from the role in the order ledger.
 
-Reads the hook input from stdin (JSON with `session_id` and `transcript_path`), looks the
-role up in the ledger (`tab_roles`, plus the live order THIS session accepted) and appends a
-`custom-title` line to the tab's transcript, plus the sidecar the VS Code extension reads.
+Reads the hook input from stdin (JSON with `session_id`, `transcript_path` and
+`hook_event_name`), looks the role up in the ledger (`tab_roles`) and does two things:
 
-The same title is also written by `ledger role` and `ledger accept` when they run inside a
-Claude Code session, so a tab does not have to restart to get it. See scripts/titles.py for
-the limit of the VS Code label.
+1. Appends a `custom-title` line to the tab's transcript, plus the sidecar the VS Code
+   extension reads. `ledger role` and `ledger accept` write the same title.
+2. Prints `{"hookSpecificOutput": {"sessionTitle": ...}}`. This is what changes the label of
+   an open tab: the extension does not watch the files of step 1. A title is printed once per
+   title on `UserPromptSubmit`, and on every `SessionStart`.
+
+A tab whose role was declared after its last message keeps its old label until the next
+message. So the Router declares the role of a tab it opens before it sends the first order.
 
 Fails safe: no role, no ledger, no transcript -> it changes nothing and exits 0. A title
 is a convenience; it must never block a session from starting.
@@ -19,7 +23,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from titles import compute_title, native_path, retitle, write_title  # noqa: E402,F401
+from titles import announce, compute_title, native_path, retitle, write_title  # noqa: E402,F401
 
 
 def _log(msg: str) -> None:
@@ -37,9 +41,14 @@ def main() -> int:
     try:
         data = json.loads(sys.stdin.read() or "{}")
         session_id, transcript = data.get("session_id"), native_path(data.get("transcript_path"))
-        if not session_id or not transcript or not Path(transcript).exists():
+        if not session_id:
             return 0
-        retitle(session_id, transcript)
+        out = announce(session_id, data.get("hook_event_name"))
+        # A prompt with nothing new to announce writes nothing: the title is already on disk.
+        if (out or data.get("hook_event_name") != "UserPromptSubmit") and transcript and Path(transcript).exists():
+            retitle(session_id, transcript)
+        if out:
+            print(json.dumps(out, ensure_ascii=False))
     except (ValueError, OSError, sqlite3.Error) as err:
         _log(f"tab_title hook: {type(err).__name__}: {err}")
     return 0

@@ -85,10 +85,13 @@ measured is described when it is published.
 - It depends on behavior that is not documented: the `viewType` of the Claude Code webview
   and the way VS Code cuts a tab title to 24 characters. Both fail on the safe side: a tab
   that cannot be matched by exact title is not closed.
-- The tab title is written to disk at once, per session, but the VS Code label only shows it
-  after the extension lists the sessions again (open the session history or reopen the
-  window). Measured with the extension 2.1.322: it does not watch the title file. Until then
-  every new tab reads "Claude Code", so closing by title is ambiguous and nothing is closed.
+- The label of an open tab changes when the tab receives a message: the title hook hands the
+  name to Claude Code at session start and at each message (`sessionTitle` in the hook output,
+  measured with Claude Code 2.1.321). The extension does not watch the title file on disk
+  (measured with the extension 2.1.322). So a tab named after its last message still reads
+  "Claude Code", and it cannot be closed by title. The Router names a tab it opens before the
+  first order. The hooks run only when the plugin is installed; a copy of the folder that is
+  not installed writes the title to disk and nothing more.
 - `model:` and `effort:` in an order are not enforced. A person sets them by typing `/model`
   and `/effort` in the tab.
 - The prompt count cannot see an approved permission dialog: approving leaves no line in the
@@ -120,7 +123,7 @@ works and closing a tab is manual.
 | Order ledger (SQLite, `~/.claude/tab-dispatch/ledger.db`): orders, plans, threads, attention, session report | `scripts/ledger.py` |
 | Done check by exit code | `scripts/done_criterio.py` |
 | Tab launch and control | `scripts/tab_launch.py`, `scripts/tab_control.py`, `extension/` |
-| Tab title `S<n>-<Title>` from the role of the tab | `hooks/tab_title.py`, `scripts/titles.py` |
+| Tab title `S<n>-<Title>` from the role of the tab, at session start and at each message | `hooks/tab_title.py`, `hooks/hooks.json`, `scripts/titles.py` |
 | Prompt count per tab | `scripts/prompt_count.py` |
 
 Every figure in this README has its source in [docs/SOURCES.md](docs/SOURCES.md).

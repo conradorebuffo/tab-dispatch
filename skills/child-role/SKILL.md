@@ -17,6 +17,8 @@ ledger role <your session id> child "<scope in a few words>"
 ```
 
 The tab title follows the role. Without this step the Router should not order you.
+If the Router opened this tab, it declared you already: keep that scope and skip this step.
+A new title shows on the tab label with the next message the tab receives.
 
 ## 2. Take an order
 

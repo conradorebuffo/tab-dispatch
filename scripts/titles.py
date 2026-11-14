@@ -7,10 +7,12 @@ How Claude Code names a tab: it reads the session's transcript (`<session id>.js
 last `custom-title` line wins) and a sidecar file `<session id>/custom-title.json` next to it.
 Both are written here.
 
-Known limit (measured on 2026-11-12 with the VS Code extension 2.1.322): the extension does
-not watch these files. A title written while the tab is open reaches the tab label only when
-the extension lists the sessions again (opening the session history, or reopening the window).
-What this module guarantees is the title on disk, per session.
+The VS Code extension does not watch these files (measured on 2026-11-12 with the extension
+2.1.322): a title written while the tab is open reaches the label only when the extension
+lists the sessions again. What changes the label of an open tab is the hook output: a
+`SessionStart` or `UserPromptSubmit` hook that returns `sessionTitle` makes Claude Code rename
+the session at once (measured on 2026-11-14 with Claude Code 2.1.321). `announce` builds that
+output; `hooks/tab_title.py` prints it.
 """
 from __future__ import annotations
 
@@ -133,3 +135,39 @@ def retitle(session_id: str | None, transcript_path: str | None = None) -> str |
     if title:
         write_title(path, session_id, title)
     return title
+
+
+ANNOUNCE_EVENTS = ("SessionStart", "UserPromptSubmit")
+
+
+def _announced_file(session_id: str) -> Path:
+    import ledger
+
+    return ledger.data_dir() / "titles" / f"{session_id}.txt"
+
+
+def announce(session_id: str | None, event: str | None) -> dict | None:
+    """The hook output that makes Claude Code show the title of `session_id` on its tab now.
+
+    Returns `{"hookSpecificOutput": {"hookEventName": <event>, "sessionTitle": <title>}}`, or
+    None when there is nothing to say: no role, an event that cannot carry a title, or a
+    `UserPromptSubmit` for a title this session already announced. `SessionStart` always
+    announces, because a tab that starts again shows the default label.
+    """
+    if not session_id or event not in ANNOUNCE_EVENTS:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", session_id):
+        return None
+    title = title_for_session(session_id)
+    if not title:
+        return None
+    marker = _announced_file(session_id)
+    if event == "UserPromptSubmit":
+        try:
+            if marker.read_text(encoding="utf-8") == title:
+                return None
+        except OSError:
+            pass  # never announced: announce now
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(title, encoding="utf-8")
+    return {"hookSpecificOutput": {"hookEventName": event, "sessionTitle": title}}

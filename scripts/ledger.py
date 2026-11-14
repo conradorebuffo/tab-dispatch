@@ -320,9 +320,15 @@ def session_number(session_id: str) -> int:
     here, in the ledger, the first time a session is seen.
     """
     with _conn() as conn:
-        conn.execute("INSERT OR IGNORE INTO sessions (session_id, created_at) VALUES (?,?)",
-                     (session_id, _now().isoformat(timespec="seconds")))
-        return int(conn.execute("SELECT n FROM sessions WHERE session_id=?", (session_id,)).fetchone()[0])
+        row = conn.execute("SELECT n FROM sessions WHERE session_id=?", (session_id,)).fetchone()
+        if row is None:
+            # Not INSERT OR IGNORE: an ignored insert still takes a number, and the names skip
+            # (S1, S2, S3, S7, S14 in a run of five tabs).
+            n = conn.execute("SELECT COALESCE(MAX(n), 0) + 1 FROM sessions").fetchone()[0]
+            conn.execute("INSERT INTO sessions (n, session_id, created_at) VALUES (?,?,?)",
+                         (n, session_id, _now().isoformat(timespec="seconds")))
+            return int(n)
+        return int(row[0])
 
 
 def set_role(session_id: str, role: str, scope: str | None = None) -> None:
@@ -335,6 +341,7 @@ def set_role(session_id: str, role: str, scope: str | None = None) -> None:
             "ON CONFLICT(session_id) DO UPDATE SET role=excluded.role, scope=excluded.scope, "
             "updated_at=excluded.updated_at",
             (session_id, role, _one_line(scope) or None, _now().isoformat(timespec="seconds")))
+    session_number(session_id)  # the number follows the order in which roles are declared
     _retitle(session_id)
 
 

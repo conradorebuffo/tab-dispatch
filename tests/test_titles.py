@@ -68,3 +68,46 @@ def test_a_session_without_a_role_has_no_title_and_takes_no_number():
 def test_compute_title_without_a_number_keeps_the_old_form():
     assert titles.compute_title({"role": "child", "scope": "ledger"}, 7) == "r-7 ledger"
     assert titles.compute_title({"role": "child", "scope": None}, number=9) == "S9-Child"
+
+
+def test_session_numbers_have_no_gaps():
+    # Run of 2026-11-14: five tabs were named S1, S2, S3, S7 and S14.
+    for _ in range(4):
+        assert ledger.session_number("sess-a") == 1
+    assert ledger.session_number("sess-b") == 2
+    for _ in range(3):
+        ledger.session_number("sess-a"), ledger.session_number("sess-b")
+    assert ledger.session_number("sess-c") == 3
+
+
+def test_a_role_declared_before_the_first_message_is_announced_with_that_message():
+    # Run of 2026-11-14: four child tabs kept the label "Claude Code". The title was on disk,
+    # and nothing handed it to Claude Code while the tab was open.
+    ledger.set_role("sess-router", "coord")
+    ledger.set_role("sess-child", "child", "ticket order")
+    out = titles.announce("sess-child", "UserPromptSubmit")
+    assert out == {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "sessionTitle": "S2-TicketOrder"}}
+
+
+def test_a_title_is_announced_once_per_title_on_a_message():
+    ledger.set_role("sess-child", "child", "ticket order")
+    assert titles.announce("sess-child", "UserPromptSubmit") is not None
+    assert titles.announce("sess-child", "UserPromptSubmit") is None
+    ledger.set_role("sess-child", "child", "docs")
+    assert titles.announce("sess-child", "UserPromptSubmit")["hookSpecificOutput"]["sessionTitle"] == "S1-Docs"
+
+
+def test_a_session_start_always_announces():
+    ledger.set_role("sess-child", "child", "docs")
+    for _ in range(2):
+        out = titles.announce("sess-child", "SessionStart")
+        assert out["hookSpecificOutput"] == {"hookEventName": "SessionStart", "sessionTitle": "S1-Docs"}
+
+
+def test_nothing_is_announced_without_a_role_or_for_another_event():
+    assert titles.announce("sess-none", "UserPromptSubmit") is None
+    ledger.set_role("sess-child", "child", "docs")
+    assert titles.announce("sess-child", "Stop") is None
+    assert titles.announce("sess-child", None) is None
+    assert titles.announce(None, "SessionStart") is None
+    assert titles.announce("../outside", "SessionStart") is None

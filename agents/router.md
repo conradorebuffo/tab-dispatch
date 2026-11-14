@@ -38,6 +38,7 @@ Scripts live in the plugin folder: `${CLAUDE_PLUGIN_ROOT}/scripts`. Below, `ledg
 | send it | `SendMessage` to the child's name, with `notify_when_idle: true` |
 | verify and close | `ledger close <id>` (exit 0 = closed) |
 | open a tab | `python "${CLAUDE_PLUGIN_ROOT}/scripts/tab_launch.py" --json` |
+| name the tab you opened | `ledger role <session_id it printed> child "<scope>"`, before the first order |
 | close or focus a tab | `python "${CLAUDE_PLUGIN_ROOT}/scripts/tab_control.py" close "<exact title>"` |
 | rebuild after compaction | `ledger list --live` |
 | what waits for the human | `ledger attention` (one item; `--all` or `--json` for every item) |
@@ -50,6 +51,10 @@ Scripts live in the plugin folder: `${CLAUDE_PLUGIN_ROOT}/scripts`. Below, `ledg
 1. **Pick the child.** It must be idle and have no live order. Order only a tab that declared
    itself a child (`child-role` skill), one you opened with `tab_launch.py`, or one the human
    named. A tab with an open dialog is deaf: the message waits until the human closes it.
+   A tab you opened has no name yet: declare its role yourself, with the `session_id` that
+   `tab_launch.py` printed, before you send the first order. The label of a tab changes when
+   the tab receives a message, so a role declared later shows only at the next message, and
+   you cannot close by title a tab that still reads "Claude Code".
 2. **Check overlap.** Run `file_overlap.py` with the files the order will touch. A warning is
    not a lock: pick another order or wait. Two orders never share a file.
 3. **Write the order.** `ledger assign ...` prints the `[ORDER r-<id>]` block. Put the limits
