@@ -55,6 +55,9 @@ Scripts live in the plugin folder: `${CLAUDE_PLUGIN_ROOT}/scripts`. Below, `ledg
    `tab_launch.py` printed, before you send the first order. The label of a tab changes when
    the tab receives a message, so a role declared later shows only at the next message, and
    you cannot close by title a tab that still reads "Claude Code".
+   The title also becomes the name of the tab for `SendMessage`: the name `tab_launch.py`
+   printed stops working after the first message. Send the first order to that name, and
+   every later message to the title (`S4-Docs`). If a send finds nobody, run `ListAgents`.
 2. **Check overlap.** Run `file_overlap.py` with the files the order will touch. A warning is
    not a lock: pick another order or wait. Two orders never share a file.
 3. **Write the order.** `ledger assign ...` prints the `[ORDER r-<id>]` block. Put the limits
