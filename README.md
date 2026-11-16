@@ -22,6 +22,20 @@ work starts. The child does not write the check and the check does not ask the c
 child reports `ready`, the Router runs the command. Exit 0 closes the order. Anything else
 reopens it, with the error as printed.
 
+## When to use this
+
+It fits when all of this is true:
+
+- **You work inside the Claude Code extension for VS Code.** The tabs are session tabs of that
+  extension. Opening, naming and closing them goes through the extension; a session in a
+  terminal can keep the ledger, and nothing else.
+- **You are on native Windows.** It was written and tested on Windows 11, without WSL, and the
+  CI runs on `windows-latest`. Nothing else was tested.
+- **A command can check the work.** An order is done when its `done` command exits 0. If no
+  command can tell that a piece of work is finished, the ledger has nothing to verify.
+- **You do not need a lock.** `file_overlap.py` warns when two orders name the same file. It is
+  a warning, not a protection: nothing stops two tabs from editing one file.
+
 ## The contract
 
 Two text blocks cross between tabs, each stamped from the machine clock. This is a real order
