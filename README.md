@@ -103,6 +103,7 @@ measured is described when it is published.
 - It depends on behavior that is not documented: the `viewType` of the Claude Code webview
   and the way VS Code cuts a tab title to 24 characters. Both fail on the safe side: a tab
   that cannot be matched by exact title is not closed.
+- The Router can focus and close tabs in one VS Code window only, the window that takes the request; a tab in another window is reported as `not_found` and stays open.
 - The label of an open tab changes when the tab receives a message: the title hook hands the
   name to Claude Code at session start and at each message (`sessionTitle` in the hook output,
   measured with Claude Code 2.1.321). The extension does not watch the title file on disk
