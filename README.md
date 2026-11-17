@@ -1,11 +1,12 @@
 # tab-dispatch
-
 Five Claude Code tabs, and my mind jumps branch to branch. Work stalls waiting on me.
 
 The Router gives my attention one place to rest: it tells me which tab needs me.
 
 One person, ten Claude Code tabs. A Router tab hands orders to child tabs. An order closes
 when its `done` command exits 0. A tab saying "done" closes nothing.
+
+https://github.com/user-attachments/assets/7f949859-9891-4bee-b310-3dcaf061e9da
 
 ## The problem
 
